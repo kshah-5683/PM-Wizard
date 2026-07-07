@@ -1,0 +1,30 @@
+# Credentials & Environments
+.env
+.env.*
+!.env.example
+
+# Documentation & Guidelines (Excluded per request)
+AGENTS.md
+CHANGELOG.md
+Product Management Tool PRD.md
+
+# Python Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
