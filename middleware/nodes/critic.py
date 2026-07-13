@@ -1,5 +1,5 @@
 from litellm import completion
-from middleware.config import LIGHTWEIGHT_MODEL
+from middleware.config import CRITIC_MODEL
 from middleware.state import AgentState
 
 def critic_node(state: AgentState):
@@ -15,7 +15,7 @@ def critic_node(state: AgentState):
     )
     
     response = completion(
-        model=LIGHTWEIGHT_MODEL,
+        model=CRITIC_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"PRD:\n{state['raw_prd']}"}
