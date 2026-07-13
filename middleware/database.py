@@ -26,6 +26,23 @@ class DatabaseManager:
             self.checkpointer = AsyncPostgresSaver(self.pool)
             # Automatically set up standard LangGraph checkpointer schemas
             await self.checkpointer.setup()
+            # Automatically create project_history table if it doesn't exist
+            async with self.pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("""
+                        CREATE TABLE IF NOT EXISTS project_history (
+                            thread_id TEXT PRIMARY KEY,
+                            title TEXT,
+                            source_document TEXT,
+                            status TEXT,
+                            total_epics INTEGER DEFAULT 0,
+                            total_stories INTEGER DEFAULT 0,
+                            total_story_points INTEGER DEFAULT 0,
+                            ai_summary TEXT,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
 
     async def disconnect(self):
         if self.pool:
@@ -89,6 +106,15 @@ class DatabaseManager:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, (thread_id,))
                 return await cur.fetchone()
+
+    async def list_project_history(self, limit: int = 50):
+        query = """
+            SELECT * FROM project_history ORDER BY updated_at DESC LIMIT %s;
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(query, (limit,))
+                return await cur.fetchall()
 
 # Global database manager instance
 db_manager = DatabaseManager()

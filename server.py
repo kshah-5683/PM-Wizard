@@ -270,3 +270,12 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     )
     
     return {"status": "resumed_and_processing"}
+
+@app.get("/api/v1/projects")
+async def list_projects():
+    try:
+        projects = await db_manager.list_project_history()
+        return {"projects": projects}
+    except Exception as e:
+        logger.error(f"[DB] Failed to list projects: {e}")
+        return {"projects": []}
