@@ -85,12 +85,21 @@ def run_test():
         current_status = status_data.get("status")
         print(f"   [Poll {attempts+1}] Status: {current_status}")
         
-        if current_status == "AWAITING_EM_APPROVAL":
+        if current_status in ("AWAITING_EM_APPROVAL", "AWAITING_APPROVAL"):
             print("\n--- AI Agent Paused & Awaiting Review ---")
             print(f"Title: {status_data.get('title')}")
             print(f"Metrics: {status_data.get('metrics')}")
+            
+            # Verify interrupt_payload exists and conform to the contract
+            int_payload = status_data.get("interrupt_payload")
+            if int_payload:
+                print(f"[OK] interrupt_payload contract check: type={int_payload.get('type')}, attempt_count={int_payload.get('attempt_count')}")
+                tickets = int_payload.get("tickets") or []
+            else:
+                print("[WARNING] interrupt_payload not found in response, falling back to draft_tickets")
+                tickets = status_data.get("draft_tickets") or []
+                
             print("\nDraft Tickets:")
-            tickets = status_data.get("draft_tickets") or []
             for t in tickets:
                 print(f" - [{t.get('key')}] ({t.get('type')}) {t.get('title')} - Estimation: {t.get('estimation')} pts")
             break
@@ -114,9 +123,11 @@ def run_test():
     choice = input("Enter choice (1 or 2): ").strip()
     
     if choice == "1":
-        resume_payload = {"decision": "approve", "comments": "Looks perfect, go ahead!"}
+        # Test new ResumeRequest status/feedback format compatibility
+        resume_payload = {"status": "APPROVED", "feedback": "Looks perfect, go ahead!"}
     else:
         comments = input("Provide revision comments for the AI: ")
+        # Test fallback format compatibility
         resume_payload = {"decision": "revise", "comments": comments}
         
     print(f"\n3. Sending resume decision to API...")
@@ -138,6 +149,25 @@ def run_test():
         if current_status in ("COMPLETED", "COMPLETED_SYNCED"):
             print(f"\n[SUCCESS] Planning loop completed fully! Final Status: {current_status}")
             sys.exit(0)
+        elif current_status in ("AWAITING_EM_APPROVAL", "AWAITING_APPROVAL"):
+            print("\n--- AI Agent Finished Revision & Paused Again for Approval ---")
+            int_payload = status_data.get("interrupt_payload")
+            if int_payload:
+                tickets = int_payload.get("tickets") or []
+            else:
+                tickets = status_data.get("draft_tickets") or []
+                
+            print("\nRevised Draft Tickets:")
+            for t in tickets:
+                print(f" - [{t.get('key')}] ({t.get('type')}) {t.get('title')} - Estimation: {t.get('estimation')} pts")
+                
+            print("\nAuto-approving the revised plan to run to completion...")
+            approve_payload = {"status": "APPROVED", "feedback": "Approved revised plan"}
+            status_code, resume_data = post_req(f"{API_BASE_URL}/plan/{thread_id}/resume", approve_payload)
+            if status_code != 200:
+                print(f"[FAIL] Auto-approval failed: {resume_data}")
+                sys.exit(1)
+            print(f"[OK] Auto-approved successfully. Continuing final poll...")
         elif current_status == "FAILED":
             print("[FAIL] The planning process failed during resume execution.")
             sys.exit(1)

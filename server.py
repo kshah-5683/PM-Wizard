@@ -45,8 +45,10 @@ class StartPlanRequest(BaseModel):
     thread_id: Optional[str] = Field(None, description="Optional thread identifier. Generates a new UUID if not provided.")
 
 class ResumePlanRequest(BaseModel):
-    decision: Literal["approve", "revise"] = Field(..., description="The EM's planning decision.")
+    decision: Optional[Literal["approve", "revise"]] = Field(None, description="The EM's planning decision.")
     comments: Optional[str] = Field(None, description="Comments or revision instructions from the Engineering Manager.")
+    status: Optional[str] = Field(None, description="Alternative field for decision status.")
+    feedback: Optional[str] = Field(None, description="Alternative field for feedback comments.")
 
 # --- Lifespan Handler ---
 @asynccontextmanager
@@ -222,10 +224,32 @@ async def get_plan_status(thread_id: str):
             
     values = snapshot.values if snapshot else {}
     
+    # Extract interrupt payload if paused
+    interrupt_payload = None
+    if snapshot and snapshot.tasks:
+        for task in snapshot.tasks:
+            if task.interrupts:
+                interrupt_payload = task.interrupts[0].value
+                break
+
+    # Determine status
+    if history:
+        db_status = history["status"]
+        if db_status == "PROCESSING":
+            status_str = "RUNNING"
+        elif db_status == "AWAITING_EM_APPROVAL":
+            status_str = "AWAITING_APPROVAL"
+        elif db_status in ("COMPLETED", "COMPLETED_SYNCED"):
+            status_str = "COMPLETED"
+        else:
+            status_str = db_status
+    else:
+        status_str = "AWAITING_APPROVAL" if (snapshot and snapshot.next) else "COMPLETED"
+        
     # Construct combined response
     return {
         "thread_id": thread_id,
-        "status": history["status"] if history else ("AWAITING_EM_APPROVAL" if snapshot.next else "COMPLETED"),
+        "status": status_str,
         "title": history["title"] if history else "In-Memory Session",
         "source_document": history["source_document"] if history else None,
         "metrics": {
@@ -238,7 +262,8 @@ async def get_plan_status(thread_id: str):
         "missing_edge_cases": values.get("missing_edge_cases"),
         "em_feedback_comments": values.get("em_feedback_comments"),
         "attempt_count": values.get("attempt_count", 0),
-        "paused_waiting_input": bool(snapshot.next) if snapshot else False
+        "paused_waiting_input": bool(snapshot.next) if snapshot else False,
+        "interrupt_payload": interrupt_payload
     }
 
 @app.post("/api/v1/plan/{thread_id}/resume")
@@ -250,9 +275,23 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     if not snapshot or not snapshot.next:
         raise HTTPException(status_code=400, detail="Planning session is not currently paused and cannot be resumed.")
         
+    # Resolve decision and comments (accepting both formats for backwards compatibility)
+    decision = request.decision
+    if decision is None and request.status:
+        status_val = request.status.lower()
+        if "approve" in status_val or status_val == "approved":
+            decision = "approve"
+        elif "revise" in status_val or status_val == "revision":
+            decision = "revise"
+            
+    if decision is None:
+        raise HTTPException(status_code=400, detail="Could not determine decision from request payload.")
+        
+    comments = request.comments or request.feedback or ""
+    
     resume_payload = {
-        "decision": request.decision,
-        "comments": request.comments or ""
+        "decision": decision,
+        "comments": comments
     }
     
     # Update status to PROCESSING
@@ -269,7 +308,7 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
         Command(resume=resume_payload)
     )
     
-    return {"status": "resumed_and_processing"}
+    return {"status": "RESUMING"}
 
 @app.get("/api/v1/projects")
 async def list_projects():

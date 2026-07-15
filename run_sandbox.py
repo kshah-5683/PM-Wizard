@@ -8,7 +8,7 @@ from middleware.graph import graph
 # Load environment variables
 load_dotenv()
 
-def run_local_sandbox():
+async def run_local_sandbox():
     print("==================================================")
     print("Starting PM Middleware Local Sandbox Stateful Loop")
     print("==================================================")
@@ -40,10 +40,10 @@ def run_local_sandbox():
     
     # Execute graph up to the first interrupt
     print("\n--- Running AI Ingester -> Critic -> Estimator loop ---")
-    graph.invoke(initial_state, config=config)
+    await graph.ainvoke(initial_state, config=config)
     
     # Poll State Snapshot from Checkpointer
-    snapshot = graph.get_state(config)
+    snapshot = await graph.aget_state(config)
     
     while snapshot.next:
         print("\n==================================================")
@@ -54,14 +54,14 @@ def run_local_sandbox():
         
         if choice == "1":
             print("\nResuming workflow with EM approval...")
-            graph.invoke(
+            await graph.ainvoke(
                 Command(resume={"decision": "approve", "comments": ""}),
                 config=config
             )
         elif choice == "2":
             comments = input("\nEnter feedback / revision instructions: ").strip()
             print("\nResuming workflow with revision feedback...")
-            graph.invoke(
+            await graph.ainvoke(
                 Command(resume={"decision": "revise", "comments": comments}),
                 config=config
             )
@@ -69,12 +69,14 @@ def run_local_sandbox():
             print("Invalid input, please enter 1 or 2.")
             continue
             
-        snapshot = graph.get_state(config)
+        snapshot = await graph.aget_state(config)
         
     print("\n==================================================")
-    final_values = graph.get_state(config).values
+    final_snapshot = await graph.aget_state(config)
+    final_values = final_snapshot.values
     print(f"Workflow Completed! Final approval status: {final_values.get('em_approval_status')}")
     print("==================================================")
 
 if __name__ == "__main__":
-    run_local_sandbox()
+    import asyncio
+    asyncio.run(run_local_sandbox())

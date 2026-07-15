@@ -62,7 +62,8 @@ export default function PlanDetail() {
           data.status === 'COMPLETED' || 
           data.status === 'COMPLETED_SYNCED' || 
           data.status === 'FAILED' ||
-          data.status === 'AWAITING_EM_APPROVAL'
+          data.status === 'AWAITING_EM_APPROVAL' ||
+          data.status === 'AWAITING_APPROVAL'
         ) {
           if (pollInterval) {
             clearInterval(pollInterval);
@@ -170,9 +171,10 @@ export default function PlanDetail() {
 
   if (!planData) return null;
 
-  const isAwaitingApproval = planData.status === 'AWAITING_EM_APPROVAL';
+  const isAwaitingApproval = planData.status === 'AWAITING_EM_APPROVAL' || planData.status === 'AWAITING_APPROVAL';
   const isCompleted = planData.status === 'COMPLETED' || planData.status === 'COMPLETED_SYNCED';
   const isFailed = planData.status === 'FAILED';
+  const historicalTicketsCount = planData.historical_context?.length || planData.interrupt_payload?.historical_context?.length || 0;
 
   return (
     <div className="container">
@@ -236,6 +238,14 @@ export default function PlanDetail() {
                 {planData.source_document || 'Direct Text Input'}
               </p>
             </div>
+
+            {historicalTicketsCount > 0 && (
+              <div style={{ marginTop: '1.25rem', padding: '0.75rem', borderRadius: '6px', background: 'rgba(52, 211, 153, 0.1)', border: '1px solid rgba(52, 211, 153, 0.2)' }}>
+                <span style={{ fontSize: '0.8rem', color: '#34d399', fontWeight: 600, display: 'block' }}>
+                  ✓ Calibrated against {historicalTicketsCount} similar past tickets
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Main Sandbox: Tickets / Gaps view */}

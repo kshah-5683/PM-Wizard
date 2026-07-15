@@ -35,6 +35,23 @@ PM-Tool/
 
 ---
 
+## ⚙️ Configuration
+
+Copy `.env.example` to `.env` and fill in the required keys. Below are the key configuration variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | LiteLLM embedding model for RAG |
+| `EMBEDDING_DIMENSION` | `1536` | Must match `EMBEDDING_MODEL` output dims |
+| `PROJECT_ROOT` | Auto-detected from `middleware/` | Root directory for codebase inspector |
+| `FALLBACK_PRIMARY_MODEL` | `github/meta-llama-3.3-70b-instruct` | Fallback when `PRIMARY_MODEL` fails |
+| `FALLBACK_CRITIC_MODEL` | `github/meta-llama-3.1-8b-instruct` | Fallback when `CRITIC_MODEL` fails |
+| `MODEL_MAX_TOKENS` | `128000` | Context window limit for token guard |
+| `LLM_CACHE_ENABLED` | `false` | Enable disk caching (development only) |
+| `LANGCHAIN_TRACING_V2` | `false` | Set to `true` to enable LangSmith tracing |
+| `LANGCHAIN_API_KEY` | *(unset)* | LangSmith API key for tracing |
+
+---
 
 ## 🎮 How to Run
 

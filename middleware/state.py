@@ -11,6 +11,7 @@ class AgentState(TypedDict):
     em_feedback_comments: Optional[str]
     prd_images_context: Optional[List[Dict[str, str]]]
     attempt_count: int
+    historical_context: Optional[List[Dict[str, Any]]]  # NEW: RAG reference tickets
 
 # Pydantic models for structured output generation
 class JiraTicket(BaseModel):

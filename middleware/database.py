@@ -9,6 +9,7 @@ class DatabaseManager:
         self.connection_string = connection_string or os.getenv("DATABASE_URL")
         self.pool = None
         self.checkpointer = None
+        self.pgvector_enabled = False
 
     async def connect(self):
         if not self.connection_string:
@@ -43,6 +44,37 @@ class DatabaseManager:
                             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
+                    
+                    # Attempt pgvector extension
+                    try:
+                        await cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                        self.pgvector_enabled = True
+                    except Exception as e:
+                        print(f"[Database] pgvector extension not available/enabled: {e}. Falling back to text-based embeddings & ILIKE search.")
+                        self.pgvector_enabled = False
+                        
+                    # Create historical_tickets table
+                    from middleware.config import EMBEDDING_DIMENSION
+                    embedding_type = f"vector({EMBEDDING_DIMENSION})" if self.pgvector_enabled else "TEXT"
+                    await cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS historical_tickets (
+                            id SERIAL PRIMARY KEY,
+                            ticket_key VARCHAR(50) UNIQUE,
+                            title TEXT,
+                            description TEXT,
+                            estimation INTEGER,
+                            priority VARCHAR(20),
+                            embedding {embedding_type},
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+            
+            # Seed historical tickets
+            try:
+                from middleware.rag import seed_historical_tickets
+                await seed_historical_tickets(self)
+            except Exception as e:
+                print(f"[Database] Error seeding historical tickets: {e}")
 
     async def disconnect(self):
         if self.pool:

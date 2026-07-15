@@ -11,7 +11,11 @@ def human_approval_node(state: AgentState):
     # Freeze the graph execution here and await external inputs
     em_feedback = interrupt({
         "status": "AWAITING_EM_APPROVAL",
-        "draft_tickets": state["jira_tickets"]
+        "draft_tickets": state["jira_tickets"],
+        "type": "human_approval_required",
+        "tickets": state["jira_tickets"],
+        "attempt_count": state.get("attempt_count", 0),
+        "historical_context": state.get("historical_context")
     })
     
     decision = em_feedback.get("decision", "approve")
@@ -27,6 +31,5 @@ def human_approval_node(state: AgentState):
         print(f"[Human-in-the-Loop] EM Requested Revisions: {comments}")
         return {
             "em_approval_status": "REVISE",
-            "em_feedback_comments": comments,
-            "attempt_count": state.get("attempt_count", 0) + 1
+            "em_feedback_comments": comments
         }
