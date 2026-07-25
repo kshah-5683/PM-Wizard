@@ -1,7 +1,7 @@
 from langgraph.types import interrupt
 from middleware.state import AgentState
 
-def human_approval_node(state: AgentState):
+async def human_approval_node(state: AgentState):
     print("\n--- [Human-in-the-Loop Node] Awaiting EM Review ---")
     print("Draft Tickets Proposed:")
     for ticket in state.get("jira_tickets", []):

@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
@@ -43,12 +43,27 @@ class StartPlanRequest(BaseModel):
     raw_prd: str = Field(..., description="The product requirements document markdown text.")
     source_document: Optional[str] = Field(None, description="Optional upstream source URL (e.g. Notion, Confluence).")
     thread_id: Optional[str] = Field(None, description="Optional thread identifier. Generates a new UUID if not provided.")
+    sprint_constraints: Optional[str] = Field(None, description="Optional dynamic engineering or business constraints.")
+    custom_tags: Optional[List[str]] = Field(None, description="Optional custom tags list.")
 
 class ResumePlanRequest(BaseModel):
     decision: Optional[Literal["approve", "revise"]] = Field(None, description="The EM's planning decision.")
     comments: Optional[str] = Field(None, description="Comments or revision instructions from the Engineering Manager.")
     status: Optional[str] = Field(None, description="Alternative field for decision status.")
     feedback: Optional[str] = Field(None, description="Alternative field for feedback comments.")
+    action: Optional[Literal["bypass", "amend"]] = Field(None, description="Decision action for critic resolution.")
+    amended_prd: Optional[str] = Field(None, description="Amended PRD content if action is 'amend'.")
+
+class ChangeRequestPayload(BaseModel):
+    ticket_key: str = Field(..., description="The key of the ticket to modify, e.g. TICKET-1")
+    developer_name: str = Field(..., description="The name of the developer requesting the change.")
+    original_points: Optional[int] = Field(None, description="Original story points estimation.")
+    original_description: Optional[str] = Field(None, description="Original description text.")
+    requested_points: Optional[int] = Field(None, description="Requested story points estimation.")
+    requested_description: Optional[str] = Field(None, description="Requested description text.")
+
+class ResolveChangeRequestPayload(BaseModel):
+    status: Literal["APPROVED", "REJECTED"] = Field(..., description="Decision: APPROVED or REJECTED")
 
 # --- Lifespan Handler ---
 @asynccontextmanager
@@ -92,10 +107,24 @@ async def handle_after_execution(graph, thread_id: str):
     snapshot = await graph.aget_state(config)
     
     if snapshot and snapshot.next:
-        # Paused at an interrupt (usually human_approval)
+        # Paused at an interrupt (human_approval or critic_resolution)
         values = snapshot.values
         tickets = values.get("jira_tickets", []) or []
         
+        # Determine which interrupt it is
+        interrupt_type = "human_approval_required"
+        if snapshot.tasks:
+            for task in snapshot.tasks:
+                if task.interrupts:
+                    val = task.interrupts[0].value
+                    if isinstance(val, dict):
+                        interrupt_type = val.get("type", "human_approval_required")
+                    break
+        
+        status_str = "AWAITING_EM_APPROVAL"
+        if interrupt_type == "critic_resolution_required":
+            status_str = "AWAITING_CRITIC_RESOLUTION"
+            
         # Calculate stats
         total_story_points = sum(t.get("estimation", 0) for t in tickets if isinstance(t, dict))
         total_epics = sum(1 for t in tickets if isinstance(t, dict) and t.get("type") == "Epic")
@@ -114,7 +143,7 @@ async def handle_after_execution(graph, thread_id: str):
                 thread_id=thread_id,
                 title=title,
                 source_doc=None,
-                status="AWAITING_EM_APPROVAL",
+                status=status_str,
                 metrics={
                     "total_epics": total_epics,
                     "total_stories": total_stories,
@@ -122,7 +151,7 @@ async def handle_after_execution(graph, thread_id: str):
                 },
                 ai_summary=ai_summary_trimmed
             )
-            logger.info(f"[PLAN] Session {thread_id} status updated to AWAITING_EM_APPROVAL.")
+            logger.info(f"[PLAN] Session {thread_id} status updated to {status_str}.")
         except Exception as e:
             logger.error(f"[DB] Failed to save metadata to project_history: {e}")
     else:
@@ -183,7 +212,10 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
         "jira_tickets": None,
         "em_approval_status": "PENDING",
         "em_feedback_comments": None,
-        "attempt_count": 0
+        "attempt_count": 0,
+        "workspace_profile": None,
+        "sprint_constraints": request.sprint_constraints,
+        "custom_tags": request.custom_tags
     }
     
     title = f"Plan for {request.raw_prd.splitlines()[0][:50]}" if request.raw_prd else "New Sprint Plan"
@@ -239,12 +271,28 @@ async def get_plan_status(thread_id: str):
             status_str = "RUNNING"
         elif db_status == "AWAITING_EM_APPROVAL":
             status_str = "AWAITING_APPROVAL"
+        elif db_status == "AWAITING_CRITIC_RESOLUTION":
+            status_str = "AWAITING_CRITIC_RESOLUTION"
         elif db_status in ("COMPLETED", "COMPLETED_SYNCED"):
             status_str = "COMPLETED"
         else:
             status_str = db_status
     else:
-        status_str = "AWAITING_APPROVAL" if (snapshot and snapshot.next) else "COMPLETED"
+        if snapshot and snapshot.next:
+            interrupt_type = "human_approval_required"
+            if snapshot.tasks:
+                for task in snapshot.tasks:
+                    if task.interrupts:
+                        val = task.interrupts[0].value
+                        if isinstance(val, dict):
+                            interrupt_type = val.get("type", "human_approval_required")
+                        break
+            if interrupt_type == "critic_resolution_required":
+                status_str = "AWAITING_CRITIC_RESOLUTION"
+            else:
+                status_str = "AWAITING_APPROVAL"
+        else:
+            status_str = "COMPLETED"
         
     # Construct combined response
     return {
@@ -275,24 +323,54 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     if not snapshot or not snapshot.next:
         raise HTTPException(status_code=400, detail="Planning session is not currently paused and cannot be resumed.")
         
-    # Resolve decision and comments (accepting both formats for backwards compatibility)
-    decision = request.decision
-    if decision is None and request.status:
-        status_val = request.status.lower()
-        if "approve" in status_val or status_val == "approved":
-            decision = "approve"
-        elif "revise" in status_val or status_val == "revision":
-            decision = "revise"
+    # Check what type of interrupt we are resuming from
+    interrupt_type = "human_approval_required"
+    if snapshot.tasks:
+        for task in snapshot.tasks:
+            if task.interrupts:
+                val = task.interrupts[0].value
+                if isinstance(val, dict):
+                    interrupt_type = val.get("type", "human_approval_required")
+                break
+
+    if interrupt_type == "critic_resolution_required":
+        action = request.action
+        if action is None:
+            # Try mapping decision/status to action for compatibility
+            dec = (request.decision or "").lower()
+            stat = (request.status or "").lower()
+            if dec == "approve" or "approve" in stat or dec == "bypass" or stat == "bypass" or request.action == "bypass":
+                action = "bypass"
+            else:
+                action = "amend"
+                
+        amended_prd = request.amended_prd or request.comments or request.feedback
+        if action == "amend" and not amended_prd:
+            raise HTTPException(status_code=400, detail="Amended PRD content (amended_prd or feedback comments) is required for 'amend' action.")
             
-    if decision is None:
-        raise HTTPException(status_code=400, detail="Could not determine decision from request payload.")
+        resume_payload = {
+            "action": action,
+            "amended_prd": amended_prd
+        }
+    else:
+        # Default human_approval_required
+        decision = request.decision
+        if decision is None and request.status:
+            status_val = request.status.lower()
+            if "approve" in status_val or status_val == "approved":
+                decision = "approve"
+            elif "revise" in status_val or status_val == "revision":
+                decision = "revise"
+                
+        if decision is None:
+            raise HTTPException(status_code=400, detail="Could not determine decision from request payload.")
+            
+        comments = request.comments or request.feedback or ""
         
-    comments = request.comments or request.feedback or ""
-    
-    resume_payload = {
-        "decision": decision,
-        "comments": comments
-    }
+        resume_payload = {
+            "decision": decision,
+            "comments": comments
+        }
     
     # Update status to PROCESSING
     try:
@@ -309,6 +387,43 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     )
     
     return {"status": "RESUMING"}
+
+@app.post("/api/v1/plan/{thread_id}/change-request")
+async def create_change_request(thread_id: str, request: ChangeRequestPayload):
+    try:
+        request_id = await db_manager.create_change_request(
+            thread_id=thread_id,
+            ticket_key=request.ticket_key,
+            developer_name=request.developer_name,
+            original_points=request.original_points,
+            original_description=request.original_description,
+            requested_points=request.requested_points,
+            requested_description=request.requested_description
+        )
+        if request_id is None:
+            raise HTTPException(status_code=500, detail="Database pool not initialized.")
+        return {"change_request_id": request_id, "status": "PENDING"}
+    except Exception as e:
+        logger.error(f"[API] Failed to create change request: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/plan/{thread_id}/change-requests")
+async def get_change_requests(thread_id: str):
+    try:
+        requests = await db_manager.get_change_requests(thread_id)
+        return {"change_requests": requests}
+    except Exception as e:
+        logger.error(f"[API] Failed to get change requests: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/v1/plan/{thread_id}/change-request/{request_id}")
+async def resolve_change_request(thread_id: str, request_id: int, request: ResolveChangeRequestPayload):
+    try:
+        await db_manager.resolve_change_request(request_id, request.status)
+        return {"status": "SUCCESS", "message": f"Change request {request_id} resolved to {request.status}"}
+    except Exception as e:
+        logger.error(f"[API] Failed to resolve change request {request_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/projects")
 async def list_projects():

@@ -96,88 +96,166 @@ async def seed_historical_tickets(db) -> None:
 
                     await cur.execute(
                         """
-                        INSERT INTO historical_tickets (ticket_key, title, description, estimation, priority, embedding)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO historical_tickets (ticket_key, title, description, estimation, priority, embedding, sprint_plan_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (ticket_key) DO NOTHING;
                         """,
-                        (ticket["ticket_key"], ticket["title"], ticket["description"], ticket["estimation"], ticket["priority"], val_embedding)
+                        (ticket["ticket_key"], ticket["title"], ticket["description"], ticket["estimation"], ticket["priority"], val_embedding, "seed-sprint-plan-101")
                     )
                 print("[RAG] Seeding complete.")
     except Exception as e:
         print(f"[RAG] Failed during seeding operation: {e}")
 
-async def search_similar_tickets(db, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
-    Performs a semantic vector search if pgvector is enabled and embedding succeeds.
-    Otherwise, falls back to keyword-based ILIKE queries on title/description.
+    Performs Vector-Time Graph Retrieval:
+    1. Finds the single most relevant Seed Ticket using semantic or text search.
+    2. Expands the search to a cluster:
+       - If the Seed Ticket has a sprint_plan_id, retrieves all tickets sharing it.
+       - Otherwise/fallback: retrieves tickets that are semantically close (cosine distance < 0.25)
+         and temporally close (+/- 21 days) to the Seed Ticket.
     """
     if not db or not db.pool:
         print("[RAG] No active database pool. Returning empty list.")
         return []
 
+    # Step 1: Find the Seed Ticket
     embedding = await generate_embedding(query)
+    seed_ticket = None
 
-    # Vector path
     if db.pgvector_enabled and embedding:
         emb_str = "[" + ",".join(map(str, embedding)) + "]"
         query_sql = """
-            SELECT ticket_key, title, description, estimation, priority
+            SELECT ticket_key, title, description, estimation, priority, sprint_plan_id, created_at, embedding::text as embedding_text
             FROM historical_tickets
             ORDER BY embedding <=> %s::vector
+            LIMIT 1;
+        """
+        try:
+            async with db.pool.connection() as conn:
+                from psycopg.rows import dict_row
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query_sql, (emb_str,))
+                    seed_ticket = await cur.fetchone()
+        except Exception as e:
+            print(f"[RAG] Seed ticket vector search failed: {e}. Trying text fallback.")
+            
+    # Text-based fallback to find Seed Ticket
+    if not seed_ticket:
+        keywords = [kw.strip().lower() for kw in query.split() if len(kw.strip()) > 3]
+        keywords = keywords[:5]
+        
+        if not keywords:
+            query_sql = """
+                SELECT ticket_key, title, description, estimation, priority, sprint_plan_id, created_at
+                FROM historical_tickets
+                ORDER BY created_at DESC
+                LIMIT 1;
+            """
+            params = ()
+        else:
+            conditions = []
+            params = []
+            for kw in keywords:
+                conditions.append("(title ILIKE %s OR description ILIKE %s)")
+                params.append(f"%{kw}%")
+                params.append(f"%{kw}%")
+            cond_str = " OR ".join(conditions)
+            query_sql = f"""
+                SELECT ticket_key, title, description, estimation, priority, sprint_plan_id, created_at
+                FROM historical_tickets
+                WHERE {cond_str}
+                ORDER BY created_at DESC
+                LIMIT 1;
+            """
+            params = tuple(params)
+        try:
+            async with db.pool.connection() as conn:
+                from psycopg.rows import dict_row
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query_sql, params)
+                    seed_ticket = await cur.fetchone()
+        except Exception as e:
+            print(f"[RAG] Seed ticket text search failed: {e}")
+
+    if not seed_ticket:
+        print("[RAG] No seed ticket found in database.")
+        return []
+
+    print(f"[RAG] Found Seed Ticket: {seed_ticket['ticket_key']} (Sprint Plan: {seed_ticket.get('sprint_plan_id')})")
+
+    # Step 2: Cluster Expansion
+    sprint_plan_id = seed_ticket.get("sprint_plan_id")
+    cluster_tickets = []
+
+    # If the seed ticket belongs to a sprint plan, retrieve all tickets in that plan
+    if sprint_plan_id:
+        print(f"[RAG] Expanding cluster using sprint_plan_id: {sprint_plan_id}")
+        query_sql = """
+            SELECT ticket_key, title, description, estimation, priority
+            FROM historical_tickets
+            WHERE sprint_plan_id = %s
             LIMIT %s;
         """
         try:
             async with db.pool.connection() as conn:
                 from psycopg.rows import dict_row
                 async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(query_sql, (emb_str, top_k))
-                    return await cur.fetchall()
+                    await cur.execute(query_sql, (sprint_plan_id, top_k))
+                    cluster_tickets = await cur.fetchall()
         except Exception as e:
-            print(f"[RAG] Vector search failed: {e}. Falling back to text search.")
+            print(f"[RAG] Cluster fetch by sprint_plan_id failed: {e}")
 
-    # Fallback text path
-    keywords = [kw.strip().lower() for kw in query.split() if len(kw.strip()) > 3]
-    keywords = keywords[:5]
+    # Fallback to temporal & semantic close check if plan-based fetch yielded nothing/too little
+    if len(cluster_tickets) < 2:
+        print("[RAG] Expanding cluster using temporal/semantic proximity...")
+        created_at = seed_ticket["created_at"]
+        
+        if db.pgvector_enabled and seed_ticket.get("embedding_text"):
+            # Semantic closeness (cosine distance < 0.25) AND temporal closeness (+/- 21 days)
+            query_sql = """
+                SELECT ticket_key, title, description, estimation, priority
+                FROM historical_tickets
+                WHERE (embedding <=> %s::vector) < 0.25
+                  AND created_at BETWEEN (%s::timestamp with time zone - INTERVAL '21 days') AND (%s::timestamp with time zone + INTERVAL '21 days')
+                LIMIT %s;
+            """
+            params = (seed_ticket["embedding_text"], created_at, created_at, top_k)
+        else:
+            # Temporal closeness fallback only
+            query_sql = """
+                SELECT ticket_key, title, description, estimation, priority
+                FROM historical_tickets
+                WHERE created_at BETWEEN (%s::timestamp with time zone - INTERVAL '21 days') AND (%s::timestamp with time zone + INTERVAL '21 days')
+                LIMIT %s;
+            """
+            params = (created_at, created_at, top_k)
 
-    if not keywords:
-        query_sql = """
-            SELECT ticket_key, title, description, estimation, priority
-            FROM historical_tickets
-            ORDER BY created_at DESC
-            LIMIT %s;
-        """
-        params = (top_k,)
-    else:
-        conditions = []
-        params = []
-        for kw in keywords:
-            conditions.append("(title ILIKE %s OR description ILIKE %s)")
-            params.append(f"%{kw}%")
-            params.append(f"%{kw}%")
+        try:
+            async with db.pool.connection() as conn:
+                from psycopg.rows import dict_row
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(query_sql, params)
+                    cluster_tickets = await cur.fetchall()
+        except Exception as e:
+            print(f"[RAG] Proximity cluster fetch failed: {e}")
 
-        cond_str = " OR ".join(conditions)
-        query_sql = f"""
-            SELECT ticket_key, title, description, estimation, priority
-            FROM historical_tickets
-            WHERE {cond_str}
-            ORDER BY created_at DESC
-            LIMIT %s;
-        """
-        params.append(top_k)
+    # Ensure the seed ticket itself is included in the list and deduplicated
+    all_tickets = {t["ticket_key"]: t for t in cluster_tickets}
+    clean_seed = {
+        "ticket_key": seed_ticket["ticket_key"],
+        "title": seed_ticket["title"],
+        "description": seed_ticket["description"],
+        "estimation": seed_ticket["estimation"],
+        "priority": seed_ticket["priority"]
+    }
+    all_tickets[seed_ticket["ticket_key"]] = clean_seed
 
-    try:
-        async with db.pool.connection() as conn:
-            from psycopg.rows import dict_row
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query_sql, tuple(params))
-                return await cur.fetchall()
-    except Exception as e:
-        print(f"[RAG] Fallback text search failed: {e}")
-        return []
+    return list(all_tickets.values())
 
-async def store_approved_tickets(db, tickets: List[Dict[str, Any]]) -> None:
+async def store_approved_tickets(db, tickets: List[Dict[str, Any]], sprint_plan_id: Optional[str] = None) -> None:
     """
-    Stores or updates approved tickets in the historical_tickets table, closening the feedback loop.
+    Stores or updates approved tickets in the historical_tickets table, closing the feedback loop.
     """
     if not db or not db.pool:
         print("[RAG] No active database pool. Skipping storage of approved tickets.")
@@ -208,18 +286,19 @@ async def store_approved_tickets(db, tickets: List[Dict[str, Any]]) -> None:
             val_embedding = json.dumps(embedding) if embedding else None
 
         query_sql = """
-            INSERT INTO historical_tickets (ticket_key, title, description, estimation, priority, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO historical_tickets (ticket_key, title, description, estimation, priority, embedding, sprint_plan_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ticket_key) DO UPDATE SET
                 title = EXCLUDED.title,
                 description = EXCLUDED.description,
                 estimation = EXCLUDED.estimation,
                 priority = EXCLUDED.priority,
-                embedding = COALESCE(EXCLUDED.embedding, historical_tickets.embedding);
+                embedding = COALESCE(EXCLUDED.embedding, historical_tickets.embedding),
+                sprint_plan_id = COALESCE(EXCLUDED.sprint_plan_id, historical_tickets.sprint_plan_id);
         """
         try:
             async with db.pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query_sql, (ticket_key, title, description, estimation, priority, val_embedding))
+                    await cur.execute(query_sql, (ticket_key, title, description, estimation, priority, val_embedding, sprint_plan_id))
         except Exception as e:
             print(f"[RAG] Failed to store approved ticket {ticket_key}: {e}")

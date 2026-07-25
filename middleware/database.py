@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row
@@ -65,8 +66,32 @@ class DatabaseManager:
                             estimation INTEGER,
                             priority VARCHAR(20),
                             embedding {embedding_type},
+                            sprint_plan_id TEXT,
                             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         );
+                    """)
+                    
+                    try:
+                        await cur.execute("ALTER TABLE historical_tickets ADD COLUMN IF NOT EXISTS sprint_plan_id TEXT;")
+                    except Exception as e:
+                        print(f"[Database] Failed to alter historical_tickets: {e}")
+                        
+                    # Create ticket_change_requests table
+                    await cur.execute("""
+                        CREATE TABLE IF NOT EXISTS ticket_change_requests (
+                            id SERIAL PRIMARY KEY,
+                            thread_id TEXT NOT NULL REFERENCES project_history(thread_id) ON DELETE CASCADE,
+                            ticket_key VARCHAR(50) NOT NULL,
+                            developer_name TEXT NOT NULL,
+                            original_points INTEGER,
+                            original_description TEXT,
+                            requested_points INTEGER,
+                            requested_description TEXT,
+                            status TEXT DEFAULT 'PENDING',
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_change_requests_thread ON ticket_change_requests(thread_id);
                     """)
             
             # Seed historical tickets
@@ -146,6 +171,59 @@ class DatabaseManager:
         async with self.get_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, (limit,))
+                return await cur.fetchall()
+
+    async def create_change_request(
+        self, thread_id: str, ticket_key: str, developer_name: str,
+        original_points: Optional[int], original_description: Optional[str],
+        requested_points: Optional[int], requested_description: Optional[str]
+    ) -> Optional[int]:
+        if not self.pool:
+            return None
+        query = """
+            INSERT INTO ticket_change_requests (
+                thread_id, ticket_key, developer_name,
+                original_points, original_description,
+                requested_points, requested_description
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    query,
+                    (
+                        thread_id, ticket_key, developer_name,
+                        original_points, original_description,
+                        requested_points, requested_description
+                    )
+                )
+                res = await cur.fetchone()
+                return res[0] if res else None
+
+    async def resolve_change_request(self, request_id: int, status: str):
+        if not self.pool:
+            return
+        query = """
+            UPDATE ticket_change_requests
+            SET status = %s, updated_at = NOW()
+            WHERE id = %s;
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (status, request_id))
+
+    async def get_change_requests(self, thread_id: str):
+        if not self.pool:
+            return []
+        query = """
+            SELECT * FROM ticket_change_requests
+            WHERE thread_id = %s
+            ORDER BY created_at ASC;
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(query, (thread_id,))
                 return await cur.fetchall()
 
 # Global database manager instance

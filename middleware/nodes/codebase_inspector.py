@@ -1,6 +1,8 @@
 import os
+import json
 from typing import List, Dict, Set
 from middleware.config import PROJECT_ROOT
+from middleware.llm import aresilient_completion
 
 KEYWORDS = [
     "oauth", "stripe", "webhook", "postgres", "database", "redis", 
@@ -8,7 +10,45 @@ KEYWORDS = [
     "notification", "email", "s3", "upload", "websocket", "cron", "migration"
 ]
 
-def inspect_codebase(raw_prd: str, project_root: str = None) -> str:
+async def extract_technology_keywords(raw_prd: str) -> List[str]:
+    """
+    Calls the lightweight LLM to extract technology and architectural keywords from the PRD.
+    """
+    from middleware.config import LIGHTWEIGHT_MODEL
+    
+    system_prompt = (
+        "You are an expert software architect. Analyze the provided PRD text and extract a list "
+        "of key technology keywords, programming languages, database names, communication protocols, "
+        "or service integrations mentioned (e.g. 'postgres', 'redis', 'stripe', 'oauth', 'jwt', 'websocket'). "
+        "Respond ONLY with a JSON list of strings. Do not include markdown wraps."
+    )
+    
+    try:
+        response = await aresilient_completion(
+            model=LIGHTWEIGHT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"PRD content:\n{raw_prd}"}
+            ]
+        )
+        content = response.choices[0].message.content.strip()
+        # Clean up any potential markdown wraps
+        if content.startswith("```json"):
+            content = content.split("```json", 1)[1].rsplit("```", 1)[0].strip()
+        elif content.startswith("```"):
+            content = content.split("```", 1)[1].rsplit("```", 1)[0].strip()
+            
+        keywords = json.loads(content)
+        if isinstance(keywords, list):
+            # Clean and normalize keywords
+            return [str(kw).strip().lower() for kw in keywords if kw]
+    except Exception as e:
+        print(f"[Codebase Inspector] Failed to dynamically extract keywords ({e}). Falling back to static list.")
+        
+    # Fallback to static list
+    return KEYWORDS
+
+def inspect_codebase(raw_prd: str, project_root: str = None, keywords: List[str] = None) -> str:
     """
     Performs keyword-based JIT codebase inspection. Walks the project root,
     scans code files for keywords matched in the PRD, and returns a formatted markdown summary.
@@ -21,8 +61,14 @@ def inspect_codebase(raw_prd: str, project_root: str = None) -> str:
         return f"Error: Project root path '{project_root}' does not exist."
 
     # 1. Keyword extraction
-    prd_lower = raw_prd.lower()
-    matched_keywords = [kw for kw in KEYWORDS if kw in prd_lower]
+    if keywords is None:
+        prd_lower = raw_prd.lower()
+        matched_keywords = [kw for kw in KEYWORDS if kw in prd_lower]
+    else:
+        prd_lower = raw_prd.lower()
+        matched_keywords = [kw for kw in keywords if kw in prd_lower]
+        if not matched_keywords:
+            matched_keywords = [kw for kw in keywords if kw in KEYWORDS or kw in prd_lower]
     
     if not matched_keywords:
         return "No relevant technology keywords detected in the PRD for JIT codebase inspection."

@@ -41,16 +41,24 @@ class TestRagPipeline(unittest.IsolatedAsyncioTestCase):
         mock_db.pool.connection.return_value.__aenter__.return_value = mock_conn
         mock_conn.cursor.return_value.__aenter__.return_value = mock_cur
         
-        mock_cur.fetchall.return_value = [
-            {"ticket_key": "PROJ-101", "title": "Stripe Integration", "description": "stripe payment", "estimation": 3, "priority": "HIGH"}
-        ]
+        ticket_data = {
+            "ticket_key": "PROJ-101",
+            "title": "Stripe Integration",
+            "description": "stripe payment",
+            "estimation": 3,
+            "priority": "HIGH",
+            "created_at": "2026-07-22",
+            "sprint_plan_id": None
+        }
+        mock_cur.fetchone.return_value = ticket_data
+        mock_cur.fetchall.return_value = [ticket_data]
         
         res = await search_similar_tickets(mock_db, "stripe payment")
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["ticket_key"], "PROJ-101")
         
-        called_args = mock_cur.execute.call_args[0]
-        self.assertIn("ILIKE", called_args[0])
+        first_call_args = mock_cur.execute.call_args_list[0][0]
+        self.assertIn("ILIKE", first_call_args[0])
 
 if __name__ == "__main__":
     unittest.main()

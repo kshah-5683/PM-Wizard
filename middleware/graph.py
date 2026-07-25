@@ -7,7 +7,8 @@ from middleware.nodes import (
     critic_node,
     estimator_node,
     human_approval_node,
-    push_to_jira_node
+    push_to_jira_node,
+    critic_resolution_node
 )
 
 def should_continue(state: AgentState):
@@ -17,18 +18,49 @@ def should_continue(state: AgentState):
         return "estimator"
     return END
 
+def route_after_critic(state: AgentState):
+    critiques = state.get("critiques") or []
+    has_critical = any(c.get("category") == "CRITICAL" for c in critiques)
+    if has_critical and not state.get("critic_resolved", False):
+        return "critic_resolution"
+    return "estimator"
+
+def route_after_resolution(state: AgentState):
+    if state.get("critic_resolved", False):
+        return "estimator"
+    return "ingestion"
+
 # Build the LangGraph workflow
 workflow = StateGraph(AgentState)
 
 workflow.add_node("ingestion", ingestion_node)
 workflow.add_node("critic", critic_node)
+workflow.add_node("critic_resolution", critic_resolution_node)
 workflow.add_node("estimator", estimator_node)
 workflow.add_node("human_approval", human_approval_node)
 workflow.add_node("push_to_jira", push_to_jira_node)
 
 workflow.add_edge(START, "ingestion")
 workflow.add_edge("ingestion", "critic")
-workflow.add_edge("critic", "estimator")
+
+workflow.add_conditional_edges(
+    "critic",
+    route_after_critic,
+    {
+        "critic_resolution": "critic_resolution",
+        "estimator": "estimator"
+    }
+)
+
+workflow.add_conditional_edges(
+    "critic_resolution",
+    route_after_resolution,
+    {
+        "estimator": "estimator",
+        "ingestion": "ingestion"
+    }
+)
+
 workflow.add_edge("estimator", "human_approval")
 
 workflow.add_conditional_edges(

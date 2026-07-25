@@ -6,11 +6,17 @@ from middleware.database import db_manager
 from middleware.rag import search_similar_tickets
 from middleware.llm import aresilient_completion
 
-def make_user_prompt(prd, gaps_val, codebase_val, tickets_val, feedback_val):
+def make_user_prompt(prd, gaps_val, codebase_val, tickets_val, feedback_val, profile_val=None, constraints_val=None, tags_val=None):
     parts = [
         f"<prd>\n{prd}\n</prd>",
         f"<gaps_identified>\n{gaps_val}\n</gaps_identified>"
     ]
+    if profile_val:
+        parts.append(f"<workspace_profile>\n{profile_val}\n</workspace_profile>")
+    if constraints_val:
+        parts.append(f"<sprint_constraints>\n{constraints_val}\n</sprint_constraints>")
+    if tags_val:
+        parts.append(f"<custom_tags>\n{', '.join(tags_val)}\n</custom_tags>")
     if codebase_val:
         parts.append(f"<codebase_context>\n{codebase_val}\n</codebase_context>")
     if tickets_val:
@@ -56,9 +62,15 @@ async def estimator_node(state: AgentState):
     raw_prd = state.get("raw_prd", "")
     gaps = state.get("missing_edge_cases", "") or ""
     codebase_summary = state.get("codebase_summary", "") or ""
+    workspace_profile = state.get("workspace_profile", "") or ""
+    sprint_constraints = state.get("sprint_constraints", "") or ""
+    custom_tags = state.get("custom_tags", []) or []
 
     # Token Guard check and dynamic truncation logic
-    user_prompt = make_user_prompt(raw_prd, gaps, codebase_summary, formatted_similar_tickets, em_feedback)
+    user_prompt = make_user_prompt(
+        raw_prd, gaps, codebase_summary, formatted_similar_tickets, em_feedback,
+        profile_val=workspace_profile, constraints_val=sprint_constraints, tags_val=custom_tags
+    )
     full_prompt = system_prompt + "\n" + user_prompt
     
     tokens = token_counter(model=PRIMARY_MODEL, text=full_prompt)

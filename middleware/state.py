@@ -12,6 +12,11 @@ class AgentState(TypedDict):
     prd_images_context: Optional[List[Dict[str, str]]]
     attempt_count: int
     historical_context: Optional[List[Dict[str, Any]]]  # NEW: RAG reference tickets
+    workspace_profile: Optional[str]  # NEW: Auto-inferred tech stack & repo profiling
+    sprint_constraints: Optional[str]  # NEW: Dynamic EM constraints passed JIT
+    custom_tags: Optional[List[str]]  # NEW: Custom tagging context
+    critiques: Optional[List[Dict[str, Any]]]  # NEW: Structured critique items from critic node
+    critic_resolved: bool  # NEW: Flag indicating if critical issues have been bypassed or resolved
 
 # Pydantic models for structured output generation
 class JiraTicket(BaseModel):

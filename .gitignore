@@ -42,4 +42,4 @@ pnpm-debug.log*
 # LiteLLM Cache
 .cache/
 
-implementation_plan.md
+*.md
