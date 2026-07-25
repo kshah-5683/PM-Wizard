@@ -1,9 +1,11 @@
 import os
-from typing import Optional
+import datetime
+from typing import Optional, List
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from cryptography.fernet import Fernet
 
 class DatabaseManager:
     def __init__(self, connection_string: str = None):
@@ -11,6 +13,7 @@ class DatabaseManager:
         self.pool = None
         self.checkpointer = None
         self.pgvector_enabled = False
+        self.fernet = None
 
     async def connect(self):
         if not self.connection_string:
@@ -28,6 +31,18 @@ class DatabaseManager:
             self.checkpointer = AsyncPostgresSaver(self.pool)
             # Automatically set up standard LangGraph checkpointer schemas
             await self.checkpointer.setup()
+            
+            # Setup Fernet Encryption
+            enc_key = os.getenv("ENCRYPTION_KEY")
+            if enc_key:
+                try:
+                    self.fernet = Fernet(enc_key.encode())
+                except Exception as e:
+                    print(f"[Database] Invalid ENCRYPTION_KEY format: {e}. Integration tokens will not be secure.")
+            else:
+                print("[Database] ENCRYPTION_KEY environment variable is not configured. Falling back to temporary encryption key.")
+                self.fernet = Fernet(Fernet.generate_key())
+                
             # Automatically create project_history table if it doesn't exist
             async with self.pool.connection() as conn:
                 async with conn.cursor() as cur:
@@ -92,6 +107,24 @@ class DatabaseManager:
                             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         );
                         CREATE INDEX IF NOT EXISTS idx_change_requests_thread ON ticket_change_requests(thread_id);
+                    """)
+                    
+                    # Create user_integrations table
+                    await cur.execute("""
+                        CREATE TABLE IF NOT EXISTS user_integrations (
+                            id SERIAL PRIMARY KEY,
+                            user_id UUID NOT NULL,
+                            provider VARCHAR(50) NOT NULL,
+                            access_token TEXT NOT NULL,
+                            refresh_token TEXT,
+                            token_expires_at TIMESTAMP WITH TIME ZONE,
+                            scopes TEXT[],
+                            tenant_id TEXT,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE (user_id, provider)
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id);
                     """)
             
             # Seed historical tickets
@@ -225,6 +258,70 @@ class DatabaseManager:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, (thread_id,))
                 return await cur.fetchall()
+
+    def encrypt_token(self, plain_token: str) -> Optional[str]:
+        if not self.fernet or not plain_token:
+            return plain_token
+        return self.fernet.encrypt(plain_token.encode()).decode()
+
+    def decrypt_token(self, encrypted_token: str) -> Optional[str]:
+        if not self.fernet or not encrypted_token:
+            return encrypted_token
+        try:
+            return self.fernet.decrypt(encrypted_token.encode()).decode()
+        except Exception as e:
+            print(f"[Database] Decryption failed: {e}")
+            return None
+
+    async def save_integration(
+        self, user_id: str, provider: str, access_token: str,
+        refresh_token: Optional[str] = None, expires_at_timestamp: Optional[float] = None,
+        scopes: Optional[List[str]] = None, tenant_id: Optional[str] = None
+    ):
+        if not self.pool:
+            return
+        enc_access = self.encrypt_token(access_token)
+        enc_refresh = self.encrypt_token(refresh_token) if refresh_token else None
+        scopes_val = list(scopes) if scopes else None
+        
+        expires_at = datetime.datetime.fromtimestamp(expires_at_timestamp, datetime.timezone.utc) if expires_at_timestamp else None
+
+        query = """
+            INSERT INTO user_integrations (
+                user_id, provider, access_token, refresh_token, token_expires_at, scopes, tenant_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, provider) DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = COALESCE(EXCLUDED.refresh_token, user_integrations.refresh_token),
+                token_expires_at = EXCLUDED.token_expires_at,
+                scopes = EXCLUDED.scopes,
+                tenant_id = COALESCE(EXCLUDED.tenant_id, user_integrations.tenant_id),
+                updated_at = NOW();
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    query,
+                    (user_id, provider, enc_access, enc_refresh, expires_at, scopes_val, tenant_id)
+                )
+
+    async def get_integration(self, user_id: str, provider: str) -> Optional[dict]:
+        if not self.pool:
+            return None
+        query = """
+            SELECT * FROM user_integrations WHERE user_id = %s AND provider = %s;
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(query, (user_id, provider))
+                row = await cur.fetchone()
+                if row:
+                    row_copy = dict(row)
+                    row_copy["access_token"] = self.decrypt_token(row_copy["access_token"])
+                    if row_copy.get("refresh_token"):
+                        row_copy["refresh_token"] = self.decrypt_token(row_copy["refresh_token"])
+                    return row_copy
+                return None
 
 # Global database manager instance
 db_manager = DatabaseManager()
