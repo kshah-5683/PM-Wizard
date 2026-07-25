@@ -25,7 +25,8 @@ class DatabaseManager:
                 conninfo=self.connection_string,
                 open=False,
                 min_size=1,
-                max_size=10
+                max_size=10,
+                kwargs={"autocommit": True}
             )
             await self.pool.open()
             self.checkpointer = AsyncPostgresSaver(self.pool)
