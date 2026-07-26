@@ -15,6 +15,7 @@ export default function PlanDetail() {
   const [comments, setComments] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('tickets'); // 'tickets' or 'gaps'
+  const [amendedPrd, setAmendedPrd] = useState('');
   
   // Custom loading message rotation
   const [loadingMessage, setLoadingMessage] = useState('Initializing agent loops...');
@@ -59,13 +60,14 @@ export default function PlanDetail() {
         setPlanData(data);
         setLoading(false);
         
-        // Stop polling if completed or failed
+        // Stop polling if completed or failed or awaiting interaction
         if (
           data.status === 'COMPLETED' || 
           data.status === 'COMPLETED_SYNCED' || 
           data.status === 'FAILED' ||
           data.status === 'AWAITING_EM_APPROVAL' ||
-          data.status === 'AWAITING_APPROVAL'
+          data.status === 'AWAITING_APPROVAL' ||
+          data.status === 'AWAITING_CRITIC_RESOLUTION'
         ) {
           if (pollInterval) {
             clearInterval(pollInterval);
@@ -101,6 +103,53 @@ export default function PlanDetail() {
       if (pollInterval) clearInterval(pollInterval);
     };
   }, [thread_id, planData?.status]);
+
+  // Set initial amended PRD from backend once loaded
+  useEffect(() => {
+    if (planData?.raw_prd && !amendedPrd) {
+      setAmendedPrd(planData.raw_prd);
+    }
+  }, [planData?.raw_prd]);
+
+  const handleCriticResolution = async (action, payloadValue) => {
+    if (action === 'amend' && !payloadValue.trim()) {
+      alert("Please provide the amended PRD content to continue.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/resume`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action,
+          amended_prd: action === 'amend' ? payloadValue : null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to submit critic resolution.");
+      }
+
+      // Update state to trigger polling again
+      setPlanData(prev => ({
+        ...prev,
+        status: 'PROCESSING',
+        paused_waiting_input: false
+      }));
+      setLoading(true);
+    } catch (err) {
+      setError(err.message || "An error occurred while resuming the plan.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleDecision = async (decision) => {
     if (decision === 'revise' && !comments.trim()) {
@@ -173,6 +222,7 @@ export default function PlanDetail() {
 
   if (!planData) return null;
 
+  const isAwaitingCritic = planData.status === 'AWAITING_CRITIC_RESOLUTION';
   const isAwaitingApproval = planData.status === 'AWAITING_EM_APPROVAL' || planData.status === 'AWAITING_APPROVAL';
   const isCompleted = planData.status === 'COMPLETED' || planData.status === 'COMPLETED_SYNCED';
   const isFailed = planData.status === 'FAILED';
@@ -420,6 +470,118 @@ export default function PlanDetail() {
             <button className="btn btn-primary" onClick={() => router.push('/')}>
               Back to Dashboard
             </button>
+          </div>
+        </div>
+      )}
+
+      {isAwaitingCritic && (
+        <div className="sandbox-layout" style={{ gridTemplateColumns: '1.2fr 2fr', gap: '2rem', animation: 'slideIn 0.4s ease-out' }}>
+          
+          {/* Side Panel: Critique list */}
+          <div className="glass-panel side-panel" style={{ maxHeight: 'calc(100vh - 200px)', overflowY: 'auto', padding: '1.5rem' }}>
+            <h3 className="side-panel-title" style={{ color: 'var(--error)', display: 'flex', alignItems: 'center', marginBottom: '0.75rem', fontWeight: 600 }}>
+              <span style={{ marginRight: '8px' }}>🔴</span> Gaps Identified
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+              The AI Critic has paused the workflow due to the following deficiencies in the PRD:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {(planData.interrupt_payload?.critiques || []).map((critique, idx) => (
+                <div 
+                  key={idx} 
+                  style={{ 
+                    padding: '1.25rem', 
+                    borderRadius: '12px', 
+                    background: critique.category === 'CRITICAL' ? 'rgba(239, 68, 68, 0.05)' : 'rgba(245, 158, 11, 0.05)', 
+                    border: `1px solid ${critique.category === 'CRITICAL' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)'}` 
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <span style={{ 
+                      fontSize: '0.7rem', 
+                      fontWeight: 700, 
+                      padding: '3px 8px', 
+                      borderRadius: '6px', 
+                      background: critique.category === 'CRITICAL' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                      color: critique.category === 'CRITICAL' ? '#f87171' : '#fbbf24'
+                    }}>
+                      {critique.category}
+                    </span>
+                  </div>
+                  <h4 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.5rem', color: '#fff', lineHeight: '1.4' }}>{critique.description}</h4>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>Remediation:</strong> {critique.remediation}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Main Panel: PRD Editor & Actions */}
+          <div className="glass-panel tickets-container" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div>
+              <h3 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', fontWeight: 600, color: '#fff' }}>Resolve Gaps & Continue</h3>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                Choose to either amend the PRD content with missing specifications or bypass the Critic's checks to proceed directly to ticket estimation.
+              </p>
+            </div>
+
+            <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1 }}>
+              <label className="form-label" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Product Requirement Document (PRD) Editor</label>
+              <textarea 
+                className="textarea-field"
+                style={{ 
+                  flex: 1, 
+                  minHeight: '400px', 
+                  fontFamily: 'monospace', 
+                  fontSize: '0.9rem', 
+                  lineHeight: '1.6', 
+                  padding: '1.25rem',
+                  borderRadius: '12px',
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-primary)',
+                  resize: 'vertical'
+                }}
+                value={amendedPrd}
+                onChange={(e) => setAmendedPrd(e.target.value)}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.5rem' }}>
+              <button 
+                className="btn btn-primary" 
+                style={{ 
+                  flex: 2, 
+                  padding: '1rem', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '8px', 
+                  fontWeight: 600,
+                  boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
+                }}
+                disabled={isSubmitting}
+                onClick={() => handleCriticResolution('amend', amendedPrd)}
+              >
+                {isSubmitting ? 'Regenerating...' : '✓ Submit Amended PRD & Re-run'}
+              </button>
+              
+              <button 
+                className="btn btn-secondary" 
+                style={{ 
+                  flex: 1, 
+                  padding: '1rem', 
+                  borderColor: 'rgba(255,255,255,0.12)', 
+                  background: 'rgba(255,255,255,0.02)',
+                  fontWeight: 600
+                }}
+                disabled={isSubmitting}
+                onClick={() => handleCriticResolution('bypass', null)}
+              >
+                {isSubmitting ? 'Bypassing...' : 'Bypass Blocker'}
+              </button>
+            </div>
           </div>
         </div>
       )}

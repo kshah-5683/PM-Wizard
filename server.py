@@ -306,6 +306,7 @@ async def get_plan_status(thread_id: str):
             "total_story_points": history["total_story_points"] if history else 0
         },
         "ai_summary": history["ai_summary"] if history else values.get("missing_edge_cases", ""),
+        "raw_prd": values.get("raw_prd"),
         "draft_tickets": values.get("jira_tickets"),
         "missing_edge_cases": values.get("missing_edge_cases"),
         "em_feedback_comments": values.get("em_feedback_comments"),
