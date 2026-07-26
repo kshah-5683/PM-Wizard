@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
 export default function Dashboard() {
   const router = useRouter();
   const [rawPrd, setRawPrd] = useState(
@@ -20,7 +22,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const res = await fetch('http://127.0.0.1:8000/api/v1/projects');
+        const res = await fetch(`${API_BASE}/api/v1/projects`);
         if (res.ok) {
           const data = await res.json();
           setProjects(data.projects || []);
@@ -45,7 +47,7 @@ export default function Dashboard() {
     setError(null);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/v1/plan/start', {
+      const response = await fetch(`${API_BASE}/api/v1/plan/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

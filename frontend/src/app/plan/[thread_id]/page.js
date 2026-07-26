@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
 export default function PlanDetail() {
   const router = useRouter();
   const { thread_id } = useParams();
@@ -43,7 +45,7 @@ export default function PlanDetail() {
 
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/api/v1/plan/${thread_id}/status`);
+        const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`);
         if (!res.ok) {
           if (res.status === 404) {
             throw new Error("Session not found in system.");
@@ -110,7 +112,7 @@ export default function PlanDetail() {
     setError(null);
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/v1/plan/${thread_id}/resume`, {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/resume`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
