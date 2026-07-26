@@ -43,12 +43,16 @@ SEED_TICKETS = [
     }
 ]
 
-async def generate_embedding(text: str) -> Optional[List[float]]:
+async def generate_embedding(text: str, input_type: Optional[str] = None) -> Optional[List[float]]:
     """
     Generate an embedding using LiteLLM. Returns None on failure.
     """
     try:
-        response = await litellm.aembedding(model=EMBEDDING_MODEL, input=[text])
+        kwargs = {}
+        if "cohere" in EMBEDDING_MODEL:
+            kwargs["input_type"] = input_type or "search_document"
+            
+        response = await litellm.aembedding(model=EMBEDDING_MODEL, input=[text], **kwargs)
         if hasattr(response, 'data') and response.data:
             return response.data[0].embedding
         elif isinstance(response, dict) and 'data' in response and response['data']:
@@ -87,7 +91,7 @@ async def seed_historical_tickets(db) -> None:
                 print("[RAG] Seeding sample historical tickets...")
                 for ticket in SEED_TICKETS:
                     text_to_embed = f"{ticket['title']} {ticket['description']}"
-                    embedding = await generate_embedding(text_to_embed)
+                    embedding = await generate_embedding(text_to_embed, input_type="search_document")
 
                     if db.pgvector_enabled and embedding:
                         val_embedding = "[" + ",".join(map(str, embedding)) + "]"
@@ -120,7 +124,7 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
         return []
 
     # Step 1: Find the Seed Ticket
-    embedding = await generate_embedding(query)
+    embedding = await generate_embedding(query, input_type="search_query")
     seed_ticket = None
 
     if db.pgvector_enabled and embedding:
@@ -278,7 +282,7 @@ async def store_approved_tickets(db, tickets: List[Dict[str, Any]], sprint_plan_
             estimation = 0
 
         text_to_embed = f"{title} {description}"
-        embedding = await generate_embedding(text_to_embed)
+        embedding = await generate_embedding(text_to_embed, input_type="search_document")
 
         if db.pgvector_enabled and embedding:
             val_embedding = "[" + ",".join(map(str, embedding)) + "]"
