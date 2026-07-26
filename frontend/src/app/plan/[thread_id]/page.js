@@ -349,6 +349,46 @@ export default function PlanDetail() {
     }
   };
 
+  const handleRetryRun = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        },
+        body: JSON.stringify({
+          raw_prd: planData?.raw_prd || amendedPrd || "",
+          thread_id: thread_id
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to restart planning session.");
+      }
+
+      // Reset loading state and set status to processing to trigger spinner
+      setPlanData(prev => ({
+        ...prev,
+        status: 'PROCESSING'
+      }));
+      setLoading(true);
+
+      // Trigger hot reload after restart
+      setTimeout(() => {
+        router.refresh();
+      }, 500);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (loading && (!planData || planData.status === 'PROCESSING' || planData.status === 'PENDING')) {
     return (
       <div className="container">
@@ -772,8 +812,8 @@ export default function PlanDetail() {
             The LangGraph state machine encountered a critical error during execution. This could be due to rate limit issues on the free-tier API endpoints.
           </p>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <button className="btn btn-secondary" onClick={() => handleDecision('revise')}>
-              Retry Step
+            <button className="btn btn-secondary" disabled={isSubmitting} onClick={handleRetryRun}>
+              {isSubmitting ? 'Retrying...' : 'Retry Step'}
             </button>
             <button className="btn btn-primary" onClick={() => router.push('/')}>
               Back to Dashboard

@@ -214,7 +214,10 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
     try:
         existing = await db_manager.get_project_history(thread_id, org_id=org_id)
         if existing:
-            raise HTTPException(status_code=400, detail=f"Planning session with thread_id {thread_id} already exists in this organization.")
+            if existing.get("status") != "FAILED":
+                raise HTTPException(status_code=400, detail=f"Planning session with thread_id {thread_id} already exists in this organization.")
+    except HTTPException:
+        raise
     except Exception:
         # If DB is not connected/offline, allow running in-memory fallback
         pass
