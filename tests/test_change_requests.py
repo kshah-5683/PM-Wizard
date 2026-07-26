@@ -60,7 +60,7 @@ class TestChangeRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ticket2["description"], "Old desc 2")
 
         # Assert store_approved_tickets is called with updated tickets list
-        mock_store.assert_called_once_with(mock_db, updated_tickets, sprint_plan_id="test-thread-123")
+        mock_store.assert_called_once_with(mock_db, updated_tickets, sprint_plan_id="test-thread-123", org_id="default-org")
 
 if __name__ == "__main__":
     unittest.main()
