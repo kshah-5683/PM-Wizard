@@ -7,11 +7,6 @@ from middleware.config import (
     FALLBACK_CRITIC_MODEL
 )
 
-FALLBACK_MODELS = {
-    PRIMARY_MODEL: FALLBACK_PRIMARY_MODEL,
-    CRITIC_MODEL: FALLBACK_CRITIC_MODEL
-}
-
 
 async def aresilient_completion(model: str, **kwargs):
     """
@@ -27,7 +22,12 @@ async def aresilient_completion(model: str, **kwargs):
             pass
         return response
     except Exception as e:
-        fallback = FALLBACK_MODELS.get(model)
+        fallback = None
+        if model == PRIMARY_MODEL:
+            fallback = FALLBACK_PRIMARY_MODEL
+        elif model == CRITIC_MODEL:
+            fallback = FALLBACK_CRITIC_MODEL
+            
         if fallback:
             print(f"[LLM Fallback] {model} failed ({e}). Retrying with {fallback}...")
             fallback_response = await acompletion(model=fallback, **kwargs)

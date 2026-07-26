@@ -14,6 +14,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from middleware.graph import workflow
 from middleware.database import db_manager
+from middleware.llm import aresilient_completion
 
 # Load environment variables
 load_dotenv()
@@ -74,6 +75,17 @@ class ChangeRequestPayload(BaseModel):
 
 class ResolveChangeRequestPayload(BaseModel):
     status: Literal["APPROVED", "REJECTED"] = Field(..., description="Decision: APPROVED or REJECTED")
+
+class TicketChangeProposal(BaseModel):
+    ticket_key: str = Field(..., description="The key of the ticket to change (e.g., TICKET-1)")
+    requested_points: int = Field(..., description="The proposed new estimation in story points")
+    requested_description: str = Field(..., description="The proposed updated ticket description text")
+
+class AIChangeProposals(BaseModel):
+    proposals: List[TicketChangeProposal] = Field(..., description="List of proposed ticket change requests")
+
+class AIProposeChangesPayload(BaseModel):
+    prompt: str = Field(..., description="The plain English description of the changes.")
 
 # --- Lifespan Handler ---
 @asynccontextmanager
@@ -492,6 +504,112 @@ async def resolve_change_request(thread_id: str, request_id: int, request: Resol
     except Exception as e:
         logger.error(f"[API] Failed to resolve change request {request_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/plan/{thread_id}/propose-ai-changes")
+async def propose_ai_changes(
+    thread_id: str,
+    payload: AIProposeChangesPayload,
+    role: str = Depends(get_current_role),
+    org_id: str = Depends(get_current_org)
+):
+    if role != "DEV":
+        raise HTTPException(status_code=403, detail="Access denied. Only Developers (DEV) can propose changes via AI.")
+        
+    # Verify organization ownership of thread
+    history = await db_manager.get_project_history(thread_id, org_id=org_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="Session not found in this organization.")
+
+    # Retrieve current graph state / backlog tickets
+    graph = app.state.graph_db
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        snapshot = await graph.aget_state(config)
+        state_values = snapshot.values if snapshot else {}
+    except Exception:
+        state_values = {}
+        
+    tickets = state_values.get("jira_tickets", [])
+    if not tickets:
+        raise HTTPException(status_code=400, detail="No tickets found in this planning session backlog.")
+
+    # Call AI to parse changes
+    system_prompt = (
+        "You are an AI Engineering Assistant. A developer wants to propose adjustments to the current sprint backlog tickets.\n"
+        "Analyze their request alongside the current ticket list, identify which tickets they want to change, "
+        "and generate a list of structured change proposals.\n"
+        "For each ticket changed, you MUST provide the ticket key, the proposed story points, and the proposed new description.\n"
+        "Only generate proposals for tickets explicitly requested or logically affected. Do not hallucinate proposals for other tickets."
+    )
+    
+    user_prompt = (
+        f"Developer Request: {payload.prompt}\n\n"
+        f"Current Tickets:\n" + "\n".join([
+            f"- Key: {t.get('ticket_key') or t.get('key')}\n"
+            f"  Title: {t.get('title')}\n"
+            f"  Description: {t.get('description')}\n"
+            f"  Story Points: {t.get('estimation') or t.get('story_points', 0)}"
+            for t in tickets
+        ])
+    )
+
+    from middleware.config import PRIMARY_MODEL
+    import json
+
+    try:
+        response = await aresilient_completion(
+            model=PRIMARY_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={
+                "type": "json_object",
+                "response_schema": AIChangeProposals.model_json_schema()
+            }
+        )
+        
+        parsed = json.loads(response.choices[0].message.content)
+        validated = AIChangeProposals(**parsed)
+    except Exception as e:
+        logger.error(f"[API] AI change parsing failed: {e}")
+        raise HTTPException(status_code=500, detail=f"AI failed to process change proposal: {str(e)}")
+
+    created_count = 0
+    # Process each proposal and write to database
+    for proposal in validated.proposals:
+        # Find matching original ticket
+        orig_ticket = next((
+            t for t in tickets 
+            if (t.get('ticket_key') or t.get('key', '')).upper() == proposal.ticket_key.upper()
+        ), None)
+        
+        if not orig_ticket:
+            continue
+            
+        orig_key = orig_ticket.get('ticket_key') or orig_ticket.get('key')
+        orig_points = orig_ticket.get('estimation') or orig_ticket.get('story_points', 0)
+        orig_desc = orig_ticket.get('description', '')
+        
+        try:
+            await db_manager.create_change_request(
+                thread_id=thread_id,
+                ticket_key=orig_key,
+                developer_name="Developer AI Assistant",
+                original_points=orig_points,
+                original_description=orig_desc,
+                requested_points=proposal.requested_points,
+                requested_description=proposal.requested_description
+            )
+            created_count += 1
+        except Exception as e:
+            logger.error(f"[API] Failed to save AI change request for {orig_key}: {e}")
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Successfully parsed and submitted {created_count} change requests for EM review.",
+        "count": created_count
+    }
 
 @app.get("/api/v1/projects")
 async def list_projects(org_id: str = Depends(get_current_org)):

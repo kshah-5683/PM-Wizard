@@ -111,5 +111,53 @@ class TestServerRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response_leak.status_code, 403)
         self.assertIn("belongs to another organization", response_leak.json()["detail"])
 
+    @patch("server.db_manager")
+    @patch("server.aresilient_completion")
+    async def test_propose_ai_changes_success(self, mock_completion, mock_db):
+        # 1. Setup mock DB project check
+        mock_db.get_project_history = AsyncMock(return_value={
+            "thread_id": "test-uuid-123",
+            "org_id": "org-google"
+        })
+        mock_db.create_change_request = AsyncMock(return_value=42)
+
+        # 2. Setup mock graph backlog tickets
+        mock_snapshot = MagicMock()
+        mock_snapshot.values = {
+            "jira_tickets": [
+                {"ticket_key": "TICKET-1", "title": "Setup database", "description": "MySQL database setup", "estimation": 3}
+            ]
+        }
+        app.state.graph_db.aget_state = AsyncMock(return_value=mock_snapshot)
+
+        # 3. Setup mock LLM response generating 1 structured change request
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(message=MagicMock(content='{"proposals": [{"ticket_key": "TICKET-1", "requested_points": 5, "requested_description": "Postgres database setup"}]}'))
+        ]
+        mock_completion.return_value = mock_response
+
+        # 4. Fire API request as Developer
+        response = self.client.post(
+            "/api/v1/plan/test-uuid-123/propose-ai-changes",
+            json={"prompt": "Use Postgres with 5 SP instead of MySQL for TICKET-1"},
+            headers={"X-User-Role": "DEV", "X-Org-Id": "org-google"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "SUCCESS")
+        self.assertEqual(response.json()["count"], 1)
+
+        # Confirm DB was updated with new request details
+        mock_db.create_change_request.assert_called_once_with(
+            thread_id="test-uuid-123",
+            ticket_key="TICKET-1",
+            developer_name="Developer AI Assistant",
+            original_points=3,
+            original_description="MySQL database setup",
+            requested_points=5,
+            requested_description="Postgres database setup"
+        )
+
 if __name__ == "__main__":
     unittest.main()

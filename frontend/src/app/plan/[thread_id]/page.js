@@ -20,6 +20,7 @@ export default function PlanDetail() {
   const [activeOrg, setActiveOrg] = useState('org-google');
   const [currentUser, setCurrentUser] = useState(null);
   const [changeRequests, setChangeRequests] = useState([]);
+  const [devAiPrompt, setDevAiPrompt] = useState('');
   const [showDevModal, setShowDevModal] = useState(false);
   const [selectedTicketForChange, setSelectedTicketForChange] = useState(null);
   const [devFormName, setDevFormName] = useState('');
@@ -384,6 +385,51 @@ export default function PlanDetail() {
       }, 500);
     } catch (err) {
       setError(err.message);
+  };
+
+  const handleDevAiProposeChanges = async () => {
+    if (!devAiPrompt.trim()) {
+      alert("Please enter a description of the changes you wish to propose.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/propose-ai-changes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        },
+        body: JSON.stringify({
+          prompt: devAiPrompt
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to submit AI proposed changes.");
+      }
+
+      const data = await response.json();
+      alert(data.message || "AI has successfully generated and submitted your change proposals!");
+      setDevAiPrompt('');
+      
+      // Refresh change requests list
+      try {
+        const resList = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
+          headers: {
+            'X-Org-Id': activeOrg
+          }
+        });
+        if (resList.ok) {
+          const dataList = await resList.json();
+          setChangeRequests(dataList.change_requests || []);
+        }
+      } catch (e) {}
+    } catch (err) {
+      alert(err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -723,48 +769,87 @@ export default function PlanDetail() {
           </div>
 
           {/* Feedback & Revision Console */}
-          <div className="glass-panel feedback-panel">
-            <h3 className="side-panel-title">Revision Console</h3>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                Regeneration Prompts / Adjustments
-              </label>
-              <textarea 
-                className="feedback-textarea"
-                placeholder="e.g. Split ticket-2 into two smaller stories, or combine the authentication tickets into a single Epic."
-                value={comments}
-                onChange={(e) => setComments(e.target.value)}
-                disabled={activePersona !== 'EM'}
-              />
-            </div>
+          {activePersona === 'DEV' ? (
+            <div className="glass-panel feedback-panel">
+              <h3 className="side-panel-title">AI Change Proposer</h3>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Describe Proposed Backlog Updates
+                </label>
+                <textarea 
+                  className="feedback-textarea"
+                  placeholder="e.g. Increase PROJ-101 story points to 5 because we need database migrations, and update description to include testing."
+                  value={devAiPrompt}
+                  onChange={(e) => setDevAiPrompt(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </div>
 
-            <button 
-              className="btn btn-secondary"
-              style={{ 
-                width: '100%', 
-                border: activePersona === 'EM' ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(255, 255, 255, 0.05)', 
-                color: activePersona === 'EM' ? '#f87171' : 'var(--text-muted)',
-                cursor: activePersona === 'EM' ? 'pointer' : 'not-allowed',
-                background: activePersona === 'EM' ? 'transparent' : 'rgba(255, 255, 255, 0.01)'
-              }}
-              disabled={isSubmitting || activePersona !== 'EM'}
-              onClick={() => handleDecision('revise')}
-            >
-              {activePersona === 'EM' ? (isSubmitting ? 'Requesting...' : 'Request AI Revision') : '🔒 Revision Locked (EM Only)'}
-            </button>
-            
-            <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1rem' }}>
-              <h4 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-                Revision Guidelines:
-              </h4>
-              <ul className="bullet-list">
-                <li>Provide specific feedback on estimates (e.g. "make estimation for OAuth 5 points").</li>
-                <li>Add missing acceptance criteria for tickets.</li>
-                <li>Request splitting complex user stories into subtasks.</li>
-              </ul>
+              <button 
+                className="btn btn-primary"
+                style={{ width: '100%', marginTop: '1rem' }}
+                disabled={isSubmitting}
+                onClick={handleDevAiProposeChanges}
+              >
+                {isSubmitting ? 'Submitting Proposals...' : 'Propose Changes via AI'}
+              </button>
+              
+              <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1rem', marginTop: '1rem' }}>
+                <h4 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                  Developer Guidelines:
+                </h4>
+                <ul className="bullet-list">
+                  <li>Your suggestions will be analyzed by the AI Scrum Assistant.</li>
+                  <li>Specific updates will be logged as PENDING change proposals.</li>
+                  <li>The Engineering Manager (EM) will review and approve them before they merge.</li>
+                </ul>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="glass-panel feedback-panel">
+              <h3 className="side-panel-title">Revision Console</h3>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Regeneration Prompts / Adjustments
+                </label>
+                <textarea 
+                  className="feedback-textarea"
+                  placeholder="e.g. Split ticket-2 into two smaller stories, or combine the authentication tickets into a single Epic."
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  disabled={activePersona !== 'EM'}
+                />
+              </div>
+
+              <button 
+                className="btn btn-secondary"
+                style={{ 
+                  width: '100%', 
+                  border: activePersona === 'EM' ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(255, 255, 255, 0.05)', 
+                  color: activePersona === 'EM' ? '#f87171' : 'var(--text-muted)',
+                  cursor: activePersona === 'EM' ? 'pointer' : 'not-allowed',
+                  background: activePersona === 'EM' ? 'transparent' : 'rgba(255, 255, 255, 0.01)'
+                }}
+                disabled={isSubmitting || activePersona !== 'EM'}
+                onClick={() => handleDecision('revise')}
+              >
+                {activePersona === 'EM' ? (isSubmitting ? 'Requesting...' : 'Request AI Revision') : '🔒 Revision Locked (EM Only)'}
+              </button>
+              
+              <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1rem', marginTop: '1rem' }}>
+                <h4 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                  Revision Guidelines:
+                </h4>
+                <ul className="bullet-list">
+                  <li>Provide specific feedback on estimates (e.g. "make estimation for OAuth 5 points").</li>
+                  <li>Add missing acceptance criteria for tickets.</li>
+                  <li>Request splitting complex user stories into subtasks.</li>
+                </ul>
+              </div>
+            </div>
+          )}
 
         </div>
       )}
