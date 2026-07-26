@@ -50,6 +50,7 @@ class DatabaseManager:
                     await cur.execute("""
                         CREATE TABLE IF NOT EXISTS project_history (
                             thread_id TEXT PRIMARY KEY,
+                            org_id TEXT DEFAULT 'default-org',
                             title TEXT,
                             source_document TEXT,
                             status TEXT,
@@ -76,6 +77,7 @@ class DatabaseManager:
                     await cur.execute(f"""
                         CREATE TABLE IF NOT EXISTS historical_tickets (
                             id SERIAL PRIMARY KEY,
+                            org_id TEXT DEFAULT 'default-org',
                             ticket_key VARCHAR(50) UNIQUE,
                             title TEXT,
                             description TEXT,
@@ -115,6 +117,7 @@ class DatabaseManager:
                         CREATE TABLE IF NOT EXISTS user_integrations (
                             id SERIAL PRIMARY KEY,
                             user_id UUID NOT NULL,
+                            org_id TEXT DEFAULT 'default-org',
                             provider VARCHAR(50) NOT NULL,
                             access_token TEXT NOT NULL,
                             refresh_token TEXT,
@@ -127,6 +130,61 @@ class DatabaseManager:
                         );
                         CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id);
                     """)
+
+                    # Execute alterations to add org_id dynamically to existing databases
+                    try:
+                        await cur.execute("ALTER TABLE project_history ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT 'default-org';")
+                        await cur.execute("ALTER TABLE historical_tickets ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT 'default-org';")
+                        await cur.execute("ALTER TABLE user_integrations ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT 'default-org';")
+                    except Exception as alt_err:
+                        print(f"[Database] Failed to dynamically alter tables for multi-tenancy: {alt_err}")
+                    
+                    # Safe conditional Row-Level Security (RLS) policies for Supabase environments
+                    try:
+                        # Check if Supabase's auth schema exists to avoid local/CI test crashes
+                        await cur.execute("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth';")
+                        has_auth_schema = await cur.fetchone()
+                        
+                        if has_auth_schema:
+                            print("[Database] Supabase Auth schema detected. Initializing Row-Level Security policies.")
+                            
+                            # Enable RLS
+                            await cur.execute("ALTER TABLE user_integrations ENABLE ROW LEVEL SECURITY;")
+                            await cur.execute("ALTER TABLE ticket_change_requests ENABLE ROW LEVEL SECURITY;")
+                            
+                            # User Integrations RLS: Only allow users to read/write their own OAuth tokens
+                            await cur.execute("DROP POLICY IF EXISTS select_own_integrations ON user_integrations;")
+                            await cur.execute("""
+                                CREATE POLICY select_own_integrations ON user_integrations
+                                FOR ALL USING (auth.uid() = user_id);
+                            """)
+                            
+                            # Ticket Change Requests RLS: Everyone read, Devs write, EMs modify
+                            await cur.execute("DROP POLICY IF EXISTS select_change_requests ON ticket_change_requests;")
+                            await cur.execute("""
+                                CREATE POLICY select_change_requests ON ticket_change_requests
+                                FOR SELECT USING (true);
+                            """)
+                            
+                            await cur.execute("DROP POLICY IF EXISTS insert_dev_change_requests ON ticket_change_requests;")
+                            await cur.execute("""
+                                CREATE POLICY insert_dev_change_requests ON ticket_change_requests
+                                FOR INSERT WITH CHECK (
+                                    (auth.jwt() ->> 'role' = 'developer') OR (auth.jwt() ->> 'role' = 'authenticated')
+                                );
+                            """)
+                            
+                            await cur.execute("DROP POLICY IF EXISTS resolve_em_change_requests ON ticket_change_requests;")
+                            await cur.execute("""
+                                CREATE POLICY resolve_em_change_requests ON ticket_change_requests
+                                FOR ALL USING (
+                                    (auth.jwt() ->> 'role' = 'engineering_manager') OR (auth.jwt() ->> 'role' = 'authenticated')
+                                );
+                            """)
+                        else:
+                            print("[Database] Standard Postgres detected. Skipping Supabase RLS configurations.")
+                    except Exception as rls_err:
+                        print(f"[Database] Row-Level Security policy initialization skipped: {rls_err}")
             
             # Seed historical tickets
             try:
@@ -148,14 +206,15 @@ class DatabaseManager:
         async with self.pool.connection() as conn:
             yield conn
 
-    async def save_project_history(self, thread_id: str, title: str, source_doc: str, status: str, metrics: dict, ai_summary: str):
+    async def save_project_history(self, thread_id: str, title: str, source_doc: str, status: str, metrics: dict, ai_summary: str, org_id: str = 'default-org'):
         query = """
             INSERT INTO project_history (
-                thread_id, title, source_document, status, total_epics, total_stories, total_story_points, ai_summary
+                thread_id, org_id, title, source_document, status, total_epics, total_stories, total_story_points, ai_summary
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (thread_id) DO UPDATE SET
+                org_id = EXCLUDED.org_id,
                 status = EXCLUDED.status,
                 total_epics = EXCLUDED.total_epics,
                 total_stories = EXCLUDED.total_stories,
@@ -169,6 +228,7 @@ class DatabaseManager:
                     query,
                     (
                         thread_id,
+                        org_id,
                         title,
                         source_doc,
                         status,
@@ -189,22 +249,29 @@ class DatabaseManager:
             async with conn.cursor() as cur:
                 await cur.execute(query, (status, thread_id))
 
-    async def get_project_history(self, thread_id: str):
-        query = """
-            SELECT * FROM project_history WHERE thread_id = %s;
-        """
+    async def get_project_history(self, thread_id: str, org_id: Optional[str] = None):
+        if org_id:
+            query = """
+                SELECT * FROM project_history WHERE thread_id = %s AND org_id = %s;
+            """
+            params = (thread_id, org_id)
+        else:
+            query = """
+                SELECT * FROM project_history WHERE thread_id = %s;
+            """
+            params = (thread_id,)
         async with self.get_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, (thread_id,))
+                await cur.execute(query, params)
                 return await cur.fetchone()
 
-    async def list_project_history(self, limit: int = 50):
+    async def list_project_history(self, limit: int = 50, org_id: str = 'default-org'):
         query = """
-            SELECT * FROM project_history ORDER BY updated_at DESC LIMIT %s;
+            SELECT * FROM project_history WHERE org_id = %s ORDER BY updated_at DESC LIMIT %s;
         """
         async with self.get_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, (limit,))
+                await cur.execute(query, (org_id, limit))
                 return await cur.fetchall()
 
     async def create_change_request(
@@ -277,7 +344,7 @@ class DatabaseManager:
     async def save_integration(
         self, user_id: str, provider: str, access_token: str,
         refresh_token: Optional[str] = None, expires_at_timestamp: Optional[float] = None,
-        scopes: Optional[List[str]] = None, tenant_id: Optional[str] = None
+        scopes: Optional[List[str]] = None, tenant_id: Optional[str] = None, org_id: str = 'default-org'
     ):
         if not self.pool:
             return
@@ -286,35 +353,36 @@ class DatabaseManager:
         scopes_val = list(scopes) if scopes else None
         
         expires_at = datetime.datetime.fromtimestamp(expires_at_timestamp, datetime.timezone.utc) if expires_at_timestamp else None
-
+ 
         query = """
             INSERT INTO user_integrations (
-                user_id, provider, access_token, refresh_token, token_expires_at, scopes, tenant_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                user_id, provider, access_token, refresh_token, token_expires_at, scopes, tenant_id, org_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id, provider) DO UPDATE SET
                 access_token = EXCLUDED.access_token,
                 refresh_token = COALESCE(EXCLUDED.refresh_token, user_integrations.refresh_token),
                 token_expires_at = EXCLUDED.token_expires_at,
                 scopes = EXCLUDED.scopes,
                 tenant_id = COALESCE(EXCLUDED.tenant_id, user_integrations.tenant_id),
+                org_id = EXCLUDED.org_id,
                 updated_at = NOW();
         """
         async with self.get_connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     query,
-                    (user_id, provider, enc_access, enc_refresh, expires_at, scopes_val, tenant_id)
+                    (user_id, provider, enc_access, enc_refresh, expires_at, scopes_val, tenant_id, org_id)
                 )
 
-    async def get_integration(self, user_id: str, provider: str) -> Optional[dict]:
+    async def get_integration(self, user_id: str, provider: str, org_id: str = 'default-org') -> Optional[dict]:
         if not self.pool:
             return None
         query = """
-            SELECT * FROM user_integrations WHERE user_id = %s AND provider = %s;
+            SELECT * FROM user_integrations WHERE user_id = %s AND provider = %s AND org_id = %s;
         """
         async with self.get_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, (user_id, provider))
+                await cur.execute(query, (user_id, provider, org_id))
                 row = await cur.fetchone()
                 if row:
                     row_copy = dict(row)

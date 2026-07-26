@@ -110,7 +110,7 @@ async def seed_historical_tickets(db) -> None:
     except Exception as e:
         print(f"[RAG] Failed during seeding operation: {e}")
 
-async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+async def search_similar_tickets(db, query: str, top_k: int = 5, org_id: str = 'default-org') -> List[Dict[str, Any]]:
     """
     Performs Vector-Time Graph Retrieval:
     1. Finds the single most relevant Seed Ticket using semantic or text search.
@@ -132,6 +132,7 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
         query_sql = """
             SELECT ticket_key, title, description, estimation, priority, sprint_plan_id, created_at, embedding::text as embedding_text
             FROM historical_tickets
+            WHERE org_id = %s
             ORDER BY embedding <=> %s::vector
             LIMIT 1;
         """
@@ -139,7 +140,7 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
             async with db.pool.connection() as conn:
                 from psycopg.rows import dict_row
                 async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(query_sql, (emb_str,))
+                    await cur.execute(query_sql, (org_id, emb_str))
                     seed_ticket = await cur.fetchone()
         except Exception as e:
             print(f"[RAG] Seed ticket vector search failed: {e}. Trying text fallback.")
@@ -153,13 +154,14 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
             query_sql = """
                 SELECT ticket_key, title, description, estimation, priority, sprint_plan_id, created_at
                 FROM historical_tickets
+                WHERE org_id = %s
                 ORDER BY created_at DESC
                 LIMIT 1;
             """
-            params = ()
+            params = (org_id,)
         else:
             conditions = []
-            params = []
+            params = [org_id]
             for kw in keywords:
                 conditions.append("(title ILIKE %s OR description ILIKE %s)")
                 params.append(f"%{kw}%")
@@ -168,7 +170,7 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
             query_sql = f"""
                 SELECT ticket_key, title, description, estimation, priority, sprint_plan_id, created_at
                 FROM historical_tickets
-                WHERE {cond_str}
+                WHERE org_id = %s AND ({cond_str})
                 ORDER BY created_at DESC
                 LIMIT 1;
             """
@@ -198,14 +200,14 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
         query_sql = """
             SELECT ticket_key, title, description, estimation, priority
             FROM historical_tickets
-            WHERE sprint_plan_id = %s
+            WHERE sprint_plan_id = %s AND org_id = %s
             LIMIT %s;
         """
         try:
             async with db.pool.connection() as conn:
                 from psycopg.rows import dict_row
                 async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(query_sql, (sprint_plan_id, top_k))
+                    await cur.execute(query_sql, (sprint_plan_id, org_id, top_k))
                     cluster_tickets = await cur.fetchall()
         except Exception as e:
             print(f"[RAG] Cluster fetch by sprint_plan_id failed: {e}")
@@ -220,20 +222,20 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
             query_sql = """
                 SELECT ticket_key, title, description, estimation, priority
                 FROM historical_tickets
-                WHERE (embedding <=> %s::vector) < 0.25
+                WHERE org_id = %s AND (embedding <=> %s::vector) < 0.25
                   AND created_at BETWEEN (%s::timestamp with time zone - INTERVAL '21 days') AND (%s::timestamp with time zone + INTERVAL '21 days')
                 LIMIT %s;
             """
-            params = (seed_ticket["embedding_text"], created_at, created_at, top_k)
+            params = (org_id, seed_ticket["embedding_text"], created_at, created_at, top_k)
         else:
             # Temporal closeness fallback only
             query_sql = """
                 SELECT ticket_key, title, description, estimation, priority
                 FROM historical_tickets
-                WHERE created_at BETWEEN (%s::timestamp with time zone - INTERVAL '21 days') AND (%s::timestamp with time zone + INTERVAL '21 days')
+                WHERE org_id = %s AND created_at BETWEEN (%s::timestamp with time zone - INTERVAL '21 days') AND (%s::timestamp with time zone + INTERVAL '21 days')
                 LIMIT %s;
             """
-            params = (created_at, created_at, top_k)
+            params = (org_id, created_at, created_at, top_k)
 
         try:
             async with db.pool.connection() as conn:
@@ -257,7 +259,7 @@ async def search_similar_tickets(db, query: str, top_k: int = 5) -> List[Dict[st
 
     return list(all_tickets.values())
 
-async def store_approved_tickets(db, tickets: List[Dict[str, Any]], sprint_plan_id: Optional[str] = None) -> None:
+async def store_approved_tickets(db, tickets: List[Dict[str, Any]], sprint_plan_id: Optional[str] = None, org_id: str = 'default-org') -> None:
     """
     Stores or updates approved tickets in the historical_tickets table, closing the feedback loop.
     """
@@ -284,25 +286,27 @@ async def store_approved_tickets(db, tickets: List[Dict[str, Any]], sprint_plan_
         text_to_embed = f"{title} {description}"
         embedding = await generate_embedding(text_to_embed, input_type="search_document")
 
+        import json
         if db.pgvector_enabled and embedding:
             val_embedding = "[" + ",".join(map(str, embedding)) + "]"
         else:
             val_embedding = json.dumps(embedding) if embedding else None
 
         query_sql = """
-            INSERT INTO historical_tickets (ticket_key, title, description, estimation, priority, embedding, sprint_plan_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO historical_tickets (ticket_key, title, description, estimation, priority, embedding, sprint_plan_id, org_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ticket_key) DO UPDATE SET
                 title = EXCLUDED.title,
                 description = EXCLUDED.description,
                 estimation = EXCLUDED.estimation,
                 priority = EXCLUDED.priority,
                 embedding = COALESCE(EXCLUDED.embedding, historical_tickets.embedding),
-                sprint_plan_id = COALESCE(EXCLUDED.sprint_plan_id, historical_tickets.sprint_plan_id);
+                sprint_plan_id = COALESCE(EXCLUDED.sprint_plan_id, historical_tickets.sprint_plan_id),
+                org_id = EXCLUDED.org_id;
         """
         try:
             async with db.pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(query_sql, (ticket_key, title, description, estimation, priority, val_embedding, sprint_plan_id))
+                    await cur.execute(query_sql, (ticket_key, title, description, estimation, priority, val_embedding, sprint_plan_id, org_id))
         except Exception as e:
             print(f"[RAG] Failed to store approved ticket {ticket_key}: {e}")

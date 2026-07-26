@@ -32,7 +32,8 @@ async def estimator_node(state: AgentState):
     # Retrieve similar tickets from RAG pipeline
     try:
         raw_prd_query = state.get("raw_prd", "")[:500]
-        similar_tickets = await search_similar_tickets(db_manager, raw_prd_query)
+        org_id = state.get("org_id", "default-org")
+        similar_tickets = await search_similar_tickets(db_manager, raw_prd_query, org_id=org_id)
     except Exception as e:
         print(f"[Estimator] RAG retrieval failed ({e}), continuing without past references.")
         similar_tickets = []

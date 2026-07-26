@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     custom_tags: Optional[List[str]]  # NEW: Custom tagging context
     critiques: Optional[List[Dict[str, Any]]]  # NEW: Structured critique items from critic node
     critic_resolved: bool  # NEW: Flag indicating if critical issues have been bypassed or resolved
+    org_id: Optional[str]  # NEW: Multi-tenant organization identifier
 
 # Pydantic models for structured output generation
 class JiraTicket(BaseModel):

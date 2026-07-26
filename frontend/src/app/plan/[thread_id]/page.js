@@ -16,6 +16,15 @@ export default function PlanDetail() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('tickets'); // 'tickets' or 'gaps'
   const [amendedPrd, setAmendedPrd] = useState('');
+  const [activePersona, setActivePersona] = useState('PM');
+  const [activeOrg, setActiveOrg] = useState('org-google');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [changeRequests, setChangeRequests] = useState([]);
+  const [showDevModal, setShowDevModal] = useState(false);
+  const [selectedTicketForChange, setSelectedTicketForChange] = useState(null);
+  const [devFormName, setDevFormName] = useState('');
+  const [devFormPoints, setDevFormPoints] = useState('');
+  const [devFormDesc, setDevFormDesc] = useState('');
   
   // Custom loading message rotation
   const [loadingMessage, setLoadingMessage] = useState('Initializing agent loops...');
@@ -44,12 +53,32 @@ export default function PlanDetail() {
     let active = true;
     let pollInterval = null;
 
+    const fetchChangeRequests = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
+          headers: {
+            'X-Org-Id': activeOrg
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setChangeRequests(data.change_requests || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch change requests:", err);
+      }
+    };
+
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`);
+        const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
+          headers: {
+            'X-Org-Id': activeOrg
+          }
+        });
         if (!res.ok) {
           if (res.status === 404) {
-            throw new Error("Session not found in system.");
+            throw new Error("Session not found in this organization.");
           }
           throw new Error("Failed to load session details.");
         }
@@ -59,6 +88,9 @@ export default function PlanDetail() {
         
         setPlanData(data);
         setLoading(false);
+        
+        // Also fetch change requests
+        fetchChangeRequests();
         
         // Stop polling if completed or failed or awaiting interaction
         if (
@@ -102,7 +134,25 @@ export default function PlanDetail() {
       active = false;
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [thread_id, planData?.status]);
+  }, [thread_id, planData?.status, activeOrg]);
+
+  // Authenticate user on mount
+  useEffect(() => {
+    const userStr = localStorage.getItem('currentUser');
+    if (!userStr) {
+      router.push('/login');
+      return;
+    }
+    const user = JSON.parse(userStr);
+    setCurrentUser(user);
+    setActivePersona(user.role);
+    setActiveOrg(user.orgId);
+  }, [router]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('currentUser');
+    router.push('/login');
+  };
 
   // Set initial amended PRD from backend once loaded
   useEffect(() => {
@@ -110,6 +160,109 @@ export default function PlanDetail() {
       setAmendedPrd(planData.raw_prd);
     }
   }, [planData?.raw_prd]);
+
+  const handleResolveChangeRequest = async (requestId, status) => {
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-request/${requestId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to resolve change request.");
+      }
+
+      // Refresh list
+      try {
+        const resList = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
+          headers: {
+            'X-Org-Id': activeOrg
+          }
+        });
+        if (resList.ok) {
+          const dataList = await resList.json();
+          setChangeRequests(dataList.change_requests || []);
+        }
+      } catch (e) {}
+      
+      // Refresh status to pull modified tickets list
+      const resStatus = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
+        headers: {
+          'X-Org-Id': activeOrg
+        }
+      });
+      if (resStatus.ok) {
+        const dataStatus = await resStatus.json();
+        setPlanData(dataStatus);
+      }
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSubmitChangeRequest = async (e) => {
+    e.preventDefault();
+    if (!devFormName.trim() || !devFormPoints || !devFormDesc.trim()) {
+      alert("Please fill out all fields.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-request`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        },
+        body: JSON.stringify({
+          ticket_key: selectedTicketForChange.key,
+          developer_name: devFormName,
+          original_points: selectedTicketForChange.estimation,
+          original_description: selectedTicketForChange.description,
+          requested_points: parseInt(devFormPoints),
+          requested_description: devFormDesc
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to submit change request.");
+      }
+
+      setShowDevModal(false);
+      setSelectedTicketForChange(null);
+      setDevFormName('');
+      setDevFormPoints('');
+      setDevFormDesc('');
+      
+      // Refresh list
+      try {
+        const resList = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
+          headers: {
+            'X-Org-Id': activeOrg
+          }
+        });
+        if (resList.ok) {
+          const dataList = await resList.json();
+          setChangeRequests(dataList.change_requests || []);
+        }
+      } catch (e) {}
+      alert("Ticket change request submitted successfully. Awaiting EM approval!");
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleCriticResolution = async (action, payloadValue) => {
     if (action === 'amend' && !payloadValue.trim()) {
@@ -125,6 +278,8 @@ export default function PlanDetail() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
         },
         body: JSON.stringify({
           action,
@@ -165,6 +320,8 @@ export default function PlanDetail() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
         },
         body: JSON.stringify({
           decision,
@@ -241,12 +398,28 @@ export default function PlanDetail() {
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {currentUser && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1rem',
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid var(--glass-border)',
+              padding: '6px 16px',
+              borderRadius: '12px',
+              fontSize: '0.85rem'
+            }}>
+              <span>🏢 <strong>{activeOrg === 'org-google' ? 'Google' : activeOrg === 'org-microsoft' ? 'Microsoft' : activeOrg === 'org-meta' ? 'Meta' : activeOrg}</strong></span>
+              <span style={{ color: 'rgba(255,255,255,0.15)' }}>|</span>
+              <span>👤 {currentUser.name} (<strong>{activePersona}</strong>)</span>
+            </div>
+          )}
           <button className="btn btn-secondary" onClick={() => router.push('/')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '6px' }}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Dashboard
           </button>
-          {isAwaitingApproval && (
+          {isAwaitingApproval && activePersona === 'EM' && (
             <button 
               className="btn btn-primary"
               disabled={isSubmitting}
@@ -255,6 +428,7 @@ export default function PlanDetail() {
               {isSubmitting ? 'Syncing...' : 'Approve & Sync'}
             </button>
           )}
+          <button className="btn btn-secondary" style={{ borderColor: 'rgba(239, 68, 68, 0.3)', color: '#f87171' }} onClick={handleLogout}>Log Out</button>
         </div>
       </header>
 
@@ -331,6 +505,20 @@ export default function PlanDetail() {
               >
                 AI Gaps Analysis
               </button>
+              <button 
+                className="btn" 
+                style={{ 
+                  background: activeTab === 'requests' ? 'var(--bg-tertiary)' : 'transparent',
+                  borderColor: activeTab === 'requests' ? 'var(--accent-primary)' : 'transparent',
+                  borderWidth: '1px',
+                  borderStyle: 'solid',
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.9rem'
+                }}
+                onClick={() => setActiveTab('requests')}
+              >
+                Change Requests ({changeRequests.length || 0})
+              </button>
             </div>
 
             {activeTab === 'tickets' && (
@@ -355,6 +543,32 @@ export default function PlanDetail() {
                         </div>
                         <h4 className="ticket-title">{t.title}</h4>
                         <p className="ticket-desc">{t.description}</p>
+                        
+                        {activePersona === 'DEV' && (
+                          <button 
+                            type="button"
+                            className="btn" 
+                            style={{ 
+                              marginTop: '0.75rem', 
+                              padding: '5px 12px', 
+                              fontSize: '0.8rem', 
+                              borderColor: 'var(--accent-primary)',
+                              color: '#fff',
+                              background: 'var(--accent-primary-glow)',
+                              fontWeight: 600,
+                              borderRadius: '6px',
+                              cursor: 'pointer'
+                            }}
+                            onClick={() => {
+                              setSelectedTicketForChange(t);
+                              setDevFormPoints(t.estimation);
+                              setDevFormDesc(t.description);
+                              setShowDevModal(true);
+                            }}
+                          >
+                            📝 Propose Change
+                          </button>
+                        )}
                       </div>
                     ))
                   )}
@@ -379,6 +593,93 @@ export default function PlanDetail() {
                 </div>
               </div>
             )}
+
+            {activeTab === 'requests' && (
+              <div style={{ animation: 'slideIn 0.3s ease-out', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 600, color: '#fff' }}>Developer Change Requests</h3>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                  Developers can request story point adjustments or description changes. Engineering Managers can approve or reject proposals.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  {changeRequests.length === 0 ? (
+                    <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 0' }}>No change requests submitted yet.</p>
+                  ) : (
+                    changeRequests.map((req, idx) => (
+                      <div 
+                        key={idx} 
+                        style={{ 
+                          padding: '1.25rem', 
+                          borderRadius: '12px', 
+                          background: 'rgba(255,255,255,0.01)', 
+                          border: '1px solid var(--glass-border)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.75rem'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--accent-primary)' }}>{req.ticket_key}</span>
+                          <span style={{ 
+                            fontSize: '0.7rem', 
+                            fontWeight: 700, 
+                            padding: '3px 8px', 
+                            borderRadius: '6px', 
+                            background: req.status === 'APPROVED' ? 'var(--success-glow)' : req.status === 'REJECTED' ? 'var(--error-glow)' : 'rgba(255,255,255,0.08)',
+                            color: req.status === 'APPROVED' ? 'var(--success)' : req.status === 'REJECTED' ? 'var(--error)' : 'var(--text-secondary)'
+                          }}>
+                            {req.status}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          <strong>Requested By:</strong> {req.developer_name}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'rgba(0,0,0,0.2)', padding: '0.75rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.02)' }}>
+                          <div>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>Story Points:</span>
+                            <span style={{ fontSize: '0.85rem', color: '#fff' }}>{req.original_points} SP ➜ <strong style={{ color: 'var(--success)' }}>{req.requested_points} SP</strong></span>
+                          </div>
+                          <div>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>Requested Description:</span>
+                            <span 
+                              style={{ fontSize: '0.85rem', color: '#fff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                              title={req.requested_description}
+                            >
+                              {req.requested_description}
+                            </span>
+                          </div>
+                        </div>
+
+                        {req.status === 'PENDING' && activePersona === 'EM' && (
+                          <div style={{ display: 'flex', gap: '0.75rem', alignSelf: 'flex-end', marginTop: '0.25rem' }}>
+                            <button 
+                              type="button"
+                              className="btn" 
+                              style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'var(--success)', border: 'none', color: '#fff', borderRadius: '6px', cursor: 'pointer' }}
+                              disabled={isSubmitting}
+                              onClick={() => handleResolveChangeRequest(req.id, 'APPROVED')}
+                            >
+                              ✓ Approve
+                            </button>
+                            <button 
+                              type="button"
+                              className="btn" 
+                              style={{ padding: '6px 12px', fontSize: '0.8rem', borderColor: 'var(--error)', color: 'var(--error)', borderRadius: '6px', cursor: 'pointer', background: 'transparent' }}
+                              disabled={isSubmitting}
+                              onClick={() => handleResolveChangeRequest(req.id, 'REJECTED')}
+                            >
+                              ✕ Reject
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Feedback & Revision Console */}
@@ -394,16 +695,23 @@ export default function PlanDetail() {
                 placeholder="e.g. Split ticket-2 into two smaller stories, or combine the authentication tickets into a single Epic."
                 value={comments}
                 onChange={(e) => setComments(e.target.value)}
+                disabled={activePersona !== 'EM'}
               />
             </div>
 
             <button 
               className="btn btn-secondary"
-              style={{ width: '100%', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171' }}
-              disabled={isSubmitting}
+              style={{ 
+                width: '100%', 
+                border: activePersona === 'EM' ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(255, 255, 255, 0.05)', 
+                color: activePersona === 'EM' ? '#f87171' : 'var(--text-muted)',
+                cursor: activePersona === 'EM' ? 'pointer' : 'not-allowed',
+                background: activePersona === 'EM' ? 'transparent' : 'rgba(255, 255, 255, 0.01)'
+              }}
+              disabled={isSubmitting || activePersona !== 'EM'}
               onClick={() => handleDecision('revise')}
             >
-              {isSubmitting ? 'Requesting...' : 'Request AI Revision'}
+              {activePersona === 'EM' ? (isSubmitting ? 'Requesting...' : 'Request AI Revision') : '🔒 Revision Locked (EM Only)'}
             </button>
             
             <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1rem' }}>
@@ -582,6 +890,91 @@ export default function PlanDetail() {
                 {isSubmitting ? 'Bypassing...' : 'Bypass Blocker'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showDevModal && selectedTicketForChange && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          animation: 'fadeIn 0.25s ease-out'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '600px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', background: 'var(--bg-secondary)', border: '1px solid var(--glass-border)' }}>
+            <div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#fff', marginBottom: '0.25rem' }}>Propose Change: {selectedTicketForChange.key}</h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Propose story point adjustments or description alterations to the EM.</p>
+            </div>
+
+            <form onSubmit={handleSubmitChangeRequest} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label className="form-label" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>Developer Name</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', background: 'var(--bg-tertiary)', border: '1px solid var(--glass-border)', color: '#fff' }}
+                  placeholder="e.g. John Doe"
+                  value={devFormName}
+                  onChange={(e) => setDevFormName(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label className="form-label" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>Requested Story Points (Original: {selectedTicketForChange.estimation} SP)</label>
+                <input 
+                  type="number" 
+                  className="input-field" 
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', background: 'var(--bg-tertiary)', border: '1px solid var(--glass-border)', color: '#fff' }}
+                  placeholder="e.g. 5"
+                  value={devFormPoints}
+                  onChange={(e) => setDevFormPoints(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label className="form-label" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem' }}>Requested Description</label>
+                <textarea 
+                  className="textarea-field" 
+                  style={{ width: '100%', minHeight: '120px', padding: '0.75rem', borderRadius: '8px', background: 'var(--bg-tertiary)', border: '1px solid var(--glass-border)', color: '#fff', resize: 'vertical', lineHeight: '1.5' }}
+                  value={devFormDesc}
+                  onChange={(e) => setDevFormDesc(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary" 
+                  style={{ flex: 2, padding: '0.75rem 1.5rem', fontWeight: 600 }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Submitting...' : 'Submit Request'}
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  style={{ flex: 1, padding: '0.75rem 1.5rem', borderColor: 'rgba(255,255,255,0.12)', background: 'transparent' }}
+                  onClick={() => {
+                    setShowDevModal(false);
+                    setSelectedTicketForChange(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

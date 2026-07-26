@@ -43,7 +43,8 @@ async def push_to_jira_node(state: AgentState, config: RunnableConfig):
     
     # RAG feedback loop: Store approved/merged tickets in Postgres historical_tickets
     try:
-        await store_approved_tickets(db_manager, synced_tickets, sprint_plan_id=thread_id)
+        org_id = state.get("org_id", "default-org")
+        await store_approved_tickets(db_manager, synced_tickets, sprint_plan_id=thread_id, org_id=org_id)
     except Exception as e:
         print(f"[Push to Jira] Failed to store approved tickets in RAG history ({e}).")
         

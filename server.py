@@ -5,7 +5,7 @@ from typing import Optional, Literal, List
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,16 @@ for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
     logging.getLogger(logger_name).addFilter(redact_filter)
 
 logger = logging.getLogger("pm_middleware_api")
+
+# --- Role-Based Access Control (RBAC) Dependency ---
+async def get_current_role(x_user_role: str = Header(default="PM", description="The simulated user role (PM, EM, DEV)")) -> str:
+    role = x_user_role.upper()
+    if role not in ("PM", "EM", "DEV"):
+        raise HTTPException(status_code=400, detail="Invalid X-User-Role header value. Must be 'PM', 'EM', or 'DEV'.")
+    return role
+
+async def get_current_org(x_org_id: str = Header(default="default-org", description="The tenant organization ID")) -> str:
+    return x_org_id
 
 # --- Request/Response Models ---
 class StartPlanRequest(BaseModel):
@@ -139,6 +149,7 @@ async def handle_after_execution(graph, thread_id: str):
         
         # Save state metrics to project history table (Track B)
         try:
+            org_id = values.get("org_id", "default-org")
             await db_manager.save_project_history(
                 thread_id=thread_id,
                 title=title,
@@ -149,7 +160,8 @@ async def handle_after_execution(graph, thread_id: str):
                     "total_stories": total_stories,
                     "total_story_points": total_story_points
                 },
-                ai_summary=ai_summary_trimmed
+                ai_summary=ai_summary_trimmed,
+                org_id=org_id
             )
             logger.info(f"[PLAN] Session {thread_id} status updated to {status_str}.")
         except Exception as e:
@@ -193,14 +205,16 @@ async def run_graph_resume_background(graph, thread_id: str, resume_cmd: Command
 
 # --- API Endpoints ---
 @app.post("/api/v1/plan/start")
-async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTasks):
+async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTasks, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+    if role != "PM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Product Managers (PM) can initiate new sprint plans.")
     thread_id = request.thread_id or str(uuid.uuid4())
     
     # Try fetching project history to avoid duplicate runs
     try:
-        existing = await db_manager.get_project_history(thread_id)
+        existing = await db_manager.get_project_history(thread_id, org_id=org_id)
         if existing:
-            raise HTTPException(status_code=400, detail=f"Planning session with thread_id {thread_id} already exists.")
+            raise HTTPException(status_code=400, detail=f"Planning session with thread_id {thread_id} already exists in this organization.")
     except Exception:
         # If DB is not connected/offline, allow running in-memory fallback
         pass
@@ -215,7 +229,8 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
         "attempt_count": 0,
         "workspace_profile": None,
         "sprint_constraints": request.sprint_constraints,
-        "custom_tags": request.custom_tags
+        "custom_tags": request.custom_tags,
+        "org_id": org_id
     }
     
     title = f"Plan for {request.raw_prd.splitlines()[0][:50]}" if request.raw_prd else "New Sprint Plan"
@@ -229,7 +244,8 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
             source_doc=request.source_document,
             status="PROCESSING",
             metrics={},
-            ai_summary=""
+            ai_summary="",
+            org_id=org_id
         )
     except Exception as e:
         logger.warning(f"[DB] Skipping history write (running in memory): {e}")
@@ -240,19 +256,25 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
     return {"thread_id": thread_id, "status": "PROCESSING"}
 
 @app.get("/api/v1/plan/{thread_id}/status")
-async def get_plan_status(thread_id: str):
+async def get_plan_status(thread_id: str, org_id: str = Depends(get_current_org)):
     # Fetch from lightweight history metadata first
     try:
-        history = await db_manager.get_project_history(thread_id)
+        history = await db_manager.get_project_history(thread_id, org_id=org_id)
     except Exception:
         history = None
         
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await app.state.graph_db.aget_state(config)
     
+    # Secure validation check: Verify snapshot org matches request org
+    if snapshot and snapshot.values:
+        snapshot_org = snapshot.values.get("org_id", "default-org")
+        if snapshot_org != org_id:
+            raise HTTPException(status_code=403, detail="Access denied. This session belongs to another organization.")
+            
     if not snapshot or not snapshot.values:
         if not history:
-            raise HTTPException(status_code=404, detail="Planning session not found.")
+            raise HTTPException(status_code=404, detail="Planning session not found in this organization.")
             
     values = snapshot.values if snapshot else {}
     
@@ -316,13 +338,19 @@ async def get_plan_status(thread_id: str):
     }
 
 @app.post("/api/v1/plan/{thread_id}/resume")
-async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tasks: BackgroundTasks):
+async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tasks: BackgroundTasks, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
     config = {"configurable": {"thread_id": thread_id}}
     graph = app.state.graph_db
     
     snapshot = await graph.aget_state(config)
     if not snapshot or not snapshot.next:
         raise HTTPException(status_code=400, detail="Planning session is not currently paused and cannot be resumed.")
+        
+    # Verify organization ownership
+    if snapshot.values:
+        snapshot_org = snapshot.values.get("org_id", "default-org")
+        if snapshot_org != org_id:
+            raise HTTPException(status_code=403, detail="Access denied. This session belongs to another organization.")
         
     # Check what type of interrupt we are resuming from
     interrupt_type = "human_approval_required"
@@ -345,6 +373,12 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
             else:
                 action = "amend"
                 
+        # Role verification for critic resolution
+        if action == "bypass" and role != "EM":
+            raise HTTPException(status_code=403, detail="Access denied. Only Engineering Managers (EM) can bypass Critic blocker gates.")
+        if action == "amend" and role not in ("PM", "EM"):
+            raise HTTPException(status_code=403, detail="Access denied. Developers (DEV) cannot submit PRD amendments.")
+
         amended_prd = request.amended_prd or request.comments or request.feedback
         if action == "amend" and not amended_prd:
             raise HTTPException(status_code=400, detail="Amended PRD content (amended_prd or feedback comments) is required for 'amend' action.")
@@ -355,6 +389,8 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
         }
     else:
         # Default human_approval_required
+        if role != "EM":
+            raise HTTPException(status_code=403, detail="Access denied. Only Engineering Managers (EM) can approve or revise the sprint backlog.")
         decision = request.decision
         if decision is None and request.status:
             status_val = request.status.lower()
@@ -390,7 +426,18 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     return {"status": "RESUMING"}
 
 @app.post("/api/v1/plan/{thread_id}/change-request")
-async def create_change_request(thread_id: str, request: ChangeRequestPayload):
+async def create_change_request(thread_id: str, request: ChangeRequestPayload, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+    if role != "DEV":
+        raise HTTPException(status_code=403, detail="Access denied. Only Developers (DEV) can submit change requests.")
+        
+    # Verify organization ownership of thread
+    try:
+        history = await db_manager.get_project_history(thread_id, org_id=org_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="Session not found in this organization.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     try:
         request_id = await db_manager.create_change_request(
             thread_id=thread_id,
@@ -401,15 +448,21 @@ async def create_change_request(thread_id: str, request: ChangeRequestPayload):
             requested_points=request.requested_points,
             requested_description=request.requested_description
         )
-        if request_id is None:
-            raise HTTPException(status_code=500, detail="Database pool not initialized.")
-        return {"change_request_id": request_id, "status": "PENDING"}
+        return {"status": "SUCCESS", "request_id": request_id}
     except Exception as e:
         logger.error(f"[API] Failed to create change request: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/plan/{thread_id}/change-requests")
-async def get_change_requests(thread_id: str):
+async def get_change_requests(thread_id: str, org_id: str = Depends(get_current_org)):
+    # Verify organization ownership of thread
+    try:
+        history = await db_manager.get_project_history(thread_id, org_id=org_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="Session not found in this organization.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     try:
         requests = await db_manager.get_change_requests(thread_id)
         return {"change_requests": requests}
@@ -418,7 +471,18 @@ async def get_change_requests(thread_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/v1/plan/{thread_id}/change-request/{request_id}")
-async def resolve_change_request(thread_id: str, request_id: int, request: ResolveChangeRequestPayload):
+async def resolve_change_request(thread_id: str, request_id: int, request: ResolveChangeRequestPayload, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+    if role != "EM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Engineering Managers (EM) can resolve change requests.")
+        
+    # Verify organization ownership of thread
+    try:
+        history = await db_manager.get_project_history(thread_id, org_id=org_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="Session not found in this organization.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     try:
         await db_manager.resolve_change_request(request_id, request.status)
         return {"status": "SUCCESS", "message": f"Change request {request_id} resolved to {request.status}"}
@@ -427,9 +491,9 @@ async def resolve_change_request(thread_id: str, request_id: int, request: Resol
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/projects")
-async def list_projects():
+async def list_projects(org_id: str = Depends(get_current_org)):
     try:
-        projects = await db_manager.list_project_history()
+        projects = await db_manager.list_project_history(limit=50, org_id=org_id)
         return {"projects": projects}
     except Exception as e:
         logger.error(f"[DB] Failed to list projects: {e}")

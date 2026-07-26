@@ -17,12 +17,37 @@ export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [activePersona, setActivePersona] = useState('PM');
+  const [activeOrg, setActiveOrg] = useState('org-google');
+  const [currentUser, setCurrentUser] = useState(null);
+
+  // Authenticate user on mount
+  useEffect(() => {
+    const userStr = localStorage.getItem('currentUser');
+    if (!userStr) {
+      router.push('/login');
+      return;
+    }
+    const user = JSON.parse(userStr);
+    setCurrentUser(user);
+    setActivePersona(user.role);
+    setActiveOrg(user.orgId);
+  }, [router]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('currentUser');
+    router.push('/login');
+  };
 
   // Fetch recent projects
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const res = await fetch(`${API_BASE}/api/v1/projects`);
+        const res = await fetch(`${API_BASE}/api/v1/projects`, {
+          headers: {
+            'X-Org-Id': activeOrg
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           setProjects(data.projects || []);
@@ -34,7 +59,7 @@ export default function Dashboard() {
     fetchProjects();
     const interval = setInterval(fetchProjects, 10000); // refresh every 10s
     return () => clearInterval(interval);
-  }, []);
+  }, [activeOrg]);
 
   const handleStartPlanning = async (e) => {
     e.preventDefault();
@@ -51,6 +76,8 @@ export default function Dashboard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
         },
         body: JSON.stringify({
           raw_prd: rawPrd,
@@ -92,8 +119,24 @@ export default function Dashboard() {
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>AI-Driven Sprint Planner & Engineering Middleware</p>
           </div>
         </div>
-        <div>
-          <button className="btn btn-secondary" onClick={() => router.refresh()}>Refresh Panel</button>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {currentUser && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1rem',
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid var(--glass-border)',
+              padding: '6px 16px',
+              borderRadius: '12px',
+              fontSize: '0.85rem'
+            }}>
+              <span>🏢 <strong>{activeOrg === 'org-google' ? 'Google' : activeOrg === 'org-microsoft' ? 'Microsoft' : activeOrg === 'org-meta' ? 'Meta' : activeOrg}</strong></span>
+              <span style={{ color: 'rgba(255,255,255,0.15)' }}>|</span>
+              <span>👤 {currentUser.name} (<strong>{activePersona}</strong>)</span>
+            </div>
+          )}
+          <button className="btn btn-secondary" style={{ borderColor: 'rgba(239, 68, 68, 0.3)', color: '#f87171' }} onClick={handleLogout}>Log Out</button>
         </div>
       </header>
 
@@ -129,32 +172,63 @@ export default function Dashboard() {
 
             <div className="form-group">
               <label className="form-label">PRD Markdown Content</label>
-              <textarea 
-                className="textarea-field"
-                value={rawPrd}
-                onChange={(e) => setRawPrd(e.target.value)}
-                placeholder="# Project Name..."
-              />
+              {activePersona !== 'PM' ? (
+                <div style={{ 
+                  padding: '1.25rem', 
+                  borderRadius: '12px', 
+                  background: 'var(--bg-secondary)', 
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-secondary)',
+                  minHeight: '250px',
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'monospace',
+                  fontSize: '0.9rem',
+                  lineHeight: '1.6'
+                }}>
+                  {rawPrd}
+                  <div style={{ marginTop: '1.5rem', padding: '0.75rem', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.1)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.2)', fontSize: '0.8rem', fontWeight: 500 }}>
+                    ⚠️ Only Product Managers (PM) can edit the PRD or initiate sprint plan runs. Switch roles in the header to modify.
+                  </div>
+                </div>
+              ) : (
+                <textarea 
+                  className="textarea-field"
+                  value={rawPrd}
+                  onChange={(e) => setRawPrd(e.target.value)}
+                  placeholder="# Project Name..."
+                />
+              )}
             </div>
 
-            <button 
-              type="submit" 
-              className="btn btn-primary" 
-              style={{ width: '100%', padding: '1rem' }}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px', borderLeftColor: '#fff', borderTopColor: '#fff', animation: 'spin 1s linear infinite' }}></div>
-                  Initializing AI Workflow...
-                </>
-              ) : (
-                <>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '8px' }}><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                  Generate AI Sprint Plan
-                </>
-              )}
-            </button>
+            {activePersona === 'PM' ? (
+              <button 
+                type="submit" 
+                className="btn btn-primary" 
+                style={{ width: '100%', padding: '1rem' }}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px', borderLeftColor: '#fff', borderTopColor: '#fff', animation: 'spin 1s linear infinite' }}></div>
+                    Initializing AI Workflow...
+                  </>
+                ) : (
+                  <>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '8px' }}><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    Generate AI Sprint Plan
+                  </>
+                )}
+              </button>
+            ) : (
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                style={{ width: '100%', padding: '1rem', cursor: 'not-allowed', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.01)' }}
+                disabled
+              >
+                🔒 Sprint Planning Locked (Switch to PM in the header to unlock)
+              </button>
+            )}
           </form>
         </div>
 
