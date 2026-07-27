@@ -141,67 +141,47 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="dashboard-grid">
-        {/* Main Planning input card */}
-        <div className="glass-panel planning-card">
-          <h2 style={{ marginBottom: '1.5rem', fontWeight: 600 }}>Create New Sprint Plan</h2>
-          
-          {error && (
-            <div style={{ 
-              padding: '1rem', 
-              borderRadius: '8px', 
-              background: 'var(--error-glow)', 
-              color: 'var(--error)', 
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              marginBottom: '1.5rem'
-            }}>
-              {error}
-            </div>
-          )}
+      {activePersona === 'PM' ? (
+        <div className="dashboard-grid">
+          {/* Main Planning input card */}
+          <div className="glass-panel planning-card">
+            <h2 style={{ marginBottom: '1.5rem', fontWeight: 600 }}>Create New Sprint Plan</h2>
+            
+            {error && (
+              <div style={{ 
+                padding: '1rem', 
+                borderRadius: '8px', 
+                background: 'var(--error-glow)', 
+                color: 'var(--error)', 
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                marginBottom: '1.5rem'
+              }}>
+                {error}
+              </div>
+            )}
 
-          <form onSubmit={handleStartPlanning}>
-            <div className="form-group">
-              <label className="form-label">Upstream Source URL (Optional)</label>
-              <input 
-                type="text" 
-                className="input-field" 
-                placeholder="e.g. https://notion.so/my-workspace/prd-document"
-                value={sourceDocument}
-                onChange={(e) => setSourceDocument(e.target.value)}
-              />
-            </div>
+            <form onSubmit={handleStartPlanning}>
+              <div className="form-group">
+                <label className="form-label">Upstream Source URL (Optional)</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  placeholder="e.g. https://notion.so/my-workspace/prd-document"
+                  value={sourceDocument}
+                  onChange={(e) => setSourceDocument(e.target.value)}
+                />
+              </div>
 
-            <div className="form-group">
-              <label className="form-label">PRD Markdown Content</label>
-              {activePersona !== 'PM' ? (
-                <div style={{ 
-                  padding: '1.25rem', 
-                  borderRadius: '12px', 
-                  background: 'var(--bg-secondary)', 
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--text-secondary)',
-                  minHeight: '250px',
-                  whiteSpace: 'pre-wrap',
-                  fontFamily: 'monospace',
-                  fontSize: '0.9rem',
-                  lineHeight: '1.6'
-                }}>
-                  {rawPrd}
-                  <div style={{ marginTop: '1.5rem', padding: '0.75rem', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.1)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.2)', fontSize: '0.8rem', fontWeight: 500 }}>
-                    ⚠️ Only Product Managers (PM) can edit the PRD or initiate sprint plan runs. Switch roles in the header to modify.
-                  </div>
-                </div>
-              ) : (
+              <div className="form-group">
+                <label className="form-label">PRD Markdown Content</label>
                 <textarea 
                   className="textarea-field"
                   value={rawPrd}
                   onChange={(e) => setRawPrd(e.target.value)}
                   placeholder="# Project Name..."
                 />
-              )}
-            </div>
+              </div>
 
-            {activePersona === 'PM' ? (
               <button 
                 type="submit" 
                 className="btn btn-primary" 
@@ -220,58 +200,182 @@ export default function Dashboard() {
                   </>
                 )}
               </button>
-            ) : (
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                style={{ width: '100%', padding: '1rem', cursor: 'not-allowed', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.01)' }}
-                disabled
-              >
-                🔒 Sprint Planning Locked (Switch to PM in the header to unlock)
-              </button>
-            )}
-          </form>
-        </div>
+            </form>
+          </div>
 
-        {/* Sidebar History list */}
-        <div className="glass-panel history-card">
-          <h2 className="history-title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px' }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            Recent Sessions
-          </h2>
-          
-          <div className="history-list">
-            {projects.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
-                No active or historical planning runs found in the database.
-              </p>
-            ) : (
-              projects.map((proj) => (
-                <div 
-                  key={proj.thread_id} 
-                  className="history-item"
-                  onClick={() => router.push(`/plan/${proj.thread_id}`)}
-                >
-                  <div className="history-item-header">
-                    <span className="history-item-title">{proj.title || "Untitled Session"}</span>
-                    <span className={`badge ${getStatusBadgeClass(proj.status)}`}>
-                      {proj.status.replace('_', ' ')}
-                    </span>
+          {/* Sidebar History list */}
+          <div className="glass-panel history-card">
+            <h2 className="history-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px' }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Recent Sessions
+            </h2>
+            
+            <div className="history-list">
+              {projects.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
+                  No active or historical planning runs found in the database.
+                </p>
+              ) : (
+                projects.map((proj) => (
+                  <div 
+                    key={proj.thread_id} 
+                    className="history-item"
+                    onClick={() => router.push(`/plan/${proj.thread_id}`)}
+                  >
+                    <div className="history-item-header">
+                      <span className="history-item-title">{proj.title || "Untitled Session"}</span>
+                      <span className={`badge ${getStatusBadgeClass(proj.status)}`}>
+                        {proj.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="history-item-date">
+                        {new Date(proj.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                        {proj.total_story_points ? `${proj.total_story_points} pts` : ''}
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="history-item-date">
-                      {new Date(proj.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="glass-panel" style={{ padding: '2.5rem', animation: 'slideIn 0.5s ease-out' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: '#fff' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ color: 'var(--accent-primary)', marginRight: '8px' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Review Plans
+            </h2>
+            <span style={{ 
+              background: 'rgba(255,255,255,0.03)', 
+              border: '1px solid var(--glass-border)',
+              padding: '6px 16px', 
+              borderRadius: '20px', 
+              fontSize: '0.85rem', 
+              color: 'var(--text-secondary)',
+              fontWeight: 500
+            }}>
+              {projects.length} {projects.length === 1 ? 'Plan' : 'Plans'} Available
+            </span>
+          </div>
+
+          {projects.length === 0 ? (
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              padding: '5rem 2rem',
+              color: 'var(--text-muted)',
+              border: '1px dashed rgba(255, 255, 255, 0.05)',
+              borderRadius: '12px',
+              background: 'rgba(255,255,255,0.01)'
+            }}>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: '1.5rem', color: 'var(--text-muted)', opacity: 0.6 }}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="11" y2="17"/></svg>
+              <p style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>No sprint plans ready for review</p>
+              <p style={{ fontSize: '0.85rem', textAlign: 'center', maxWidth: '380px', margin: 0, color: 'var(--text-muted)' }}>
+                {activePersona === 'EM' 
+                  ? 'Once a Product Manager submits a plan and sends it to you, it will appear here for backlog approval.'
+                  : 'Once an Engineering Manager reviews and shares a sprint plan, it will appear here for implementation.'
+                }
+              </p>
+            </div>
+          ) : (
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', 
+              gap: '1.5rem' 
+            }}>
+              {projects.map((proj) => (
+                <div 
+                  key={proj.thread_id}
+                  onClick={() => router.push(`/plan/${proj.thread_id}`)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid var(--glass-border)',
+                    borderRadius: '16px',
+                    padding: '1.5rem',
+                    cursor: 'pointer',
+                    transition: 'var(--transition-smooth)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '220px',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-4px)';
+                    e.currentTarget.style.borderColor = 'var(--accent-primary)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                    e.currentTarget.style.boxShadow = '0 12px 28px rgba(0,0,0,0.25)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'none';
+                    e.currentTarget.style.borderColor = 'var(--glass-border)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                    e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.1)';
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem', gap: '0.5rem' }}>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0, color: '#fff', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', width: '70%' }}>
+                        {proj.title || "Untitled Session"}
+                      </h3>
+                      <span className={`badge ${getStatusBadgeClass(proj.status)}`} style={{ flexShrink: 0 }}>
+                        {proj.status.replace('_', ' ')}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px', padding: '6px 8px', textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--accent-secondary)' }}>{proj.total_epics || 0}</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Epics</div>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px', padding: '6px 8px', textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--accent-primary)' }}>{proj.total_stories || 0}</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Stories</div>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px', padding: '6px 8px', textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--success)' }}>{proj.total_story_points || 0}</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Points</div>
+                      </div>
+                    </div>
+
+                    {proj.ai_summary && (
+                      <p style={{ 
+                        fontSize: '0.85rem', 
+                        color: 'var(--text-secondary)', 
+                        lineHeight: '1.5',
+                        margin: '0 0 1.25rem 0',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {proj.ai_summary}
+                      </p>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '1rem', marginTop: 'auto' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      🕒 {new Date(proj.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                      {proj.total_story_points ? `${proj.total_story_points} pts` : ''}
+                    <span style={{ fontSize: '0.85rem', color: 'var(--accent-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      {activePersona === 'EM' ? 'Review Backlog' : 'View Backlog'}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </span>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
