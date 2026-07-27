@@ -23,6 +23,8 @@ class AgentState(TypedDict):
     github_repo: Optional[str]  # NEW: Target remote repository (owner/repo)
     jira_project_key: Optional[str]  # NEW: Target Jira project key (e.g. 'PROJ')
     project_mode: Optional[str]  # 'BROWNFIELD' or 'GREENFIELD'
+    warnings: Optional[List[Dict[str, str]]]  # NEW: Degraded execution or non-fatal warning tracking
+    max_revisions_exceeded: Optional[bool]  # NEW: Flag when revision circuit breaker (max 3) is hit
 
 
 # Pydantic models for structured output generation
@@ -33,6 +35,12 @@ class JiraTicket(BaseModel):
     description: str = Field(description="Detailed user story or task description including acceptance criteria")
     estimation: int = Field(description="Story points (Fibonacci sequence: 1, 2, 3, 5, 8, 13)")
     priority: str = Field(description="Priority: 'Highest', 'High', 'Medium', 'Low', 'Lowest'")
+    parent_key: Optional[str] = Field(default=None, description="Key of parent Epic (for Story) or parent Story (for Subtask), e.g. TICKET-1")
+    blocked_by: Optional[List[str]] = Field(default_factory=list, description="Keys of tickets that block this ticket")
+    jira_issue_id: Optional[str] = Field(default=None, description="Synced Atlassian Jira Issue Key/ID once published")
+    confidence_level: Optional[str] = Field(default="MEDIUM", description="Estimation confidence level: 'HIGH', 'MEDIUM', or 'LOW'")
+    estimation_rationale: Optional[str] = Field(default=None, description="Short rationale for the estimated story points")
 
 class SprintPlan(BaseModel):
     tickets: List[JiraTicket] = Field(description="List of proposed Jira tickets")
+

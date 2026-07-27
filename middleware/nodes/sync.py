@@ -61,6 +61,7 @@ async def fetch_default_jira_project(cloud_id: str, access_token: str, client: h
 async def publish_tickets_to_jira(tickets: list, cloud_id: str, access_token: str, project_key: str = None) -> list:
     """
     Creates Epic, Story, and Subtask issues in Jira Cloud using the Atlassian OAuth credentials.
+    Supports idempotency and dynamic Epic link resolution/creation.
     """
     async with httpx.AsyncClient() as client:
         # 1. Resolve project key
@@ -82,12 +83,54 @@ async def publish_tickets_to_jira(tickets: list, cloud_id: str, access_token: st
         last_epic_key = None
         last_story_key = None
         
+        # Check if any explicit Epic ticket exists in the backlog
+        has_epic = any(t.get("type") == "Epic" for t in tickets)
+        
+        # If stories exist but no Epic exists in the plan, dynamically create a feature Epic first
+        if not has_epic and any(t.get("type") == "Story" for t in tickets):
+            # Check if any ticket already has a created Epic key
+            existing_epic_key = next((t.get("jira_issue_id") or t.get("jira_key") for t in tickets if t.get("type") == "Epic"), None)
+            if existing_epic_key:
+                last_epic_key = existing_epic_key
+            else:
+                epic_summary = f"Feature Sprint Plan [{project_key}]"
+                epic_fields = {
+                    "project": {"key": project_key},
+                    "summary": epic_summary,
+                    "description": string_to_adf("Feature epic dynamically created for sprint plan execution."),
+                    "issuetype": {"name": "Epic"}
+                }
+                url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/issue"
+                try:
+                    res = await client.post(url, headers=headers, json={"fields": epic_fields})
+                    if res.is_success:
+                        created_epic = res.json()
+                        last_epic_key = created_epic.get("key")
+                        print(f"[Jira] Dynamically created parent Epic: {last_epic_key}")
+                    else:
+                        print(f"[Jira] Warning: Failed to create dynamic Epic: {res.text}")
+                except Exception as e:
+                    print(f"[Jira] Exception creating dynamic Epic: {e}")
+
         for ticket in tickets:
+            temp_key = ticket.get("key") or ticket.get("ticket_key")
+            # Idempotency check: Skip if already published to Jira
+            existing_id = ticket.get("jira_issue_id") or ticket.get("jira_key")
+            if existing_id:
+                print(f"[Jira] Skipping already published ticket [{temp_key} -> {existing_id}]")
+                jira_keys[temp_key] = existing_id
+                if ticket.get("type") == "Epic":
+                    last_epic_key = existing_id
+                elif ticket.get("type") == "Story":
+                    last_story_key = existing_id
+                continue
+                
             ticket_type = ticket.get("type", "Story")
             summary = ticket.get("title", "")
             description = ticket.get("description", "")
             estimation = ticket.get("estimation")
             priority = ticket.get("priority", "Medium")
+            parent_key_ref = ticket.get("parent_key")
             
             jira_type = "Story"
             if ticket_type == "Epic":
@@ -115,10 +158,17 @@ async def publish_tickets_to_jira(tickets: list, cloud_id: str, access_token: st
                 except (ValueError, TypeError):
                     pass
             
-            if jira_type == "Story" and last_epic_key:
-                fields["parent"] = {"key": last_epic_key}
+            # Resolve parent linking
+            resolved_parent = None
+            if parent_key_ref and parent_key_ref in jira_keys:
+                resolved_parent = jira_keys[parent_key_ref]
+            elif jira_type == "Story" and last_epic_key:
+                resolved_parent = last_epic_key
             elif jira_type == "Sub-task" and last_story_key:
-                fields["parent"] = {"key": last_story_key}
+                resolved_parent = last_story_key
+
+            if resolved_parent:
+                fields["parent"] = {"key": resolved_parent}
                 
             url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/issue"
             try:
@@ -128,7 +178,8 @@ async def publish_tickets_to_jira(tickets: list, cloud_id: str, access_token: st
                     created_key = created_issue.get("key")
                     print(f"[Jira] Created {jira_type} successfully: {created_key}")
                     
-                    jira_keys[ticket.get("key") or ticket.get("ticket_key")] = created_key
+                    if temp_key:
+                        jira_keys[temp_key] = created_key
                     if jira_type == "Epic":
                         last_epic_key = created_key
                     elif jira_type == "Story":
@@ -144,6 +195,7 @@ async def publish_tickets_to_jira(tickets: list, cloud_id: str, access_token: st
             temp_key = ticket.get("key") or ticket.get("ticket_key")
             if temp_key in jira_keys:
                 t_copy["jira_key"] = jira_keys[temp_key]
+                t_copy["jira_issue_id"] = jira_keys[temp_key]
                 t_copy["jira_url"] = f"https://api.atlassian.com/ex/jira/{cloud_id}/browse/{jira_keys[temp_key]}"
             updated_tickets.append(t_copy)
             

@@ -44,7 +44,9 @@ async def estimator_node(state: AgentState):
         system_prompt = (
             "You are an expert Scrum Master. The user is starting a brand new project from scratch (Greenfield Mode).\n"
             "Analyze the PRD and the recommended architectural/database blueprint provided in the <codebase_context> block.\n"
-            "Break them down into a structured Sprint Plan consisting of estimated User Stories (Story) and Subtasks (Subtask).\n"
+            "Break them down into a structured Sprint Plan consisting of estimated User Stories (Story) and Subtasks (Subtask), plus parent Epics (Epic) where appropriate.\n"
+            "For each Story or Subtask, specify 'parent_key' (e.g. 'TICKET-1' pointing to parent Epic or Story) and any 'blocked_by' dependencies.\n"
+            "Set 'confidence_level' ('HIGH', 'MEDIUM', 'LOW') and provide a brief 'estimation_rationale'.\n"
             "Because there is no repository history, use **industry baseline metrics & T-shirt sizing logic** for estimations (e.g., S=1-2 SP, M=3-5 SP, L=8 SP).\n"
             "CRITICAL: For every ticket, you MUST append a warning banner or note in the description stating:\n"
             "'*⚠️ NOTE: Greenfield estimation variance is higher due to zero-to-one implementation risk.*'\n"
@@ -54,7 +56,9 @@ async def estimator_node(state: AgentState):
     else:
         system_prompt = (
             "You are an expert Scrum Master. Break down the PRD, codebase context, gaps, and past reference tickets "
-            "into a structured Sprint Plan consisting of estimated User Stories (Story) and Subtasks (Subtask). "
+            "into a structured Sprint Plan consisting of estimated User Stories (Story) and Subtasks (Subtask), linked to parent Epics (Epic) where appropriate.\n"
+            "For each Story or Subtask, specify 'parent_key' (e.g. 'TICKET-1' pointing to parent Epic or Story) and any 'blocked_by' dependencies.\n"
+            "Set 'confidence_level' ('HIGH', 'MEDIUM', 'LOW') and provide a brief 'estimation_rationale'.\n"
             "Calibrate your estimations against the provided historical reference tickets to maintain consistency. "
             "If engineering manager feedback is provided in the <em_feedback> block, you MUST revise the sprint plan "
             "and modify, add, delete, or refine the tickets to fully address all of their comments and suggestions. "

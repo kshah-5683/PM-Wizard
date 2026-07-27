@@ -20,16 +20,22 @@ async def human_approval_node(state: AgentState):
     
     decision = em_feedback.get("decision", "approve")
     comments = em_feedback.get("comments", "")
+    edited_tickets = em_feedback.get("tickets") or em_feedback.get("edited_tickets")
     
-    if decision == "approve":
+    if decision in ["approve", "edit_and_approve"] or edited_tickets:
         print("[Human-in-the-Loop] EM Approved the plan!")
-        return {
+        updates = {
             "em_approval_status": "APPROVED",
             "em_feedback_comments": None
         }
+        if edited_tickets:
+            print(f"[Human-in-the-Loop] EM updated {len(edited_tickets)} ticket(s) directly via in-place CRUD.")
+            updates["jira_tickets"] = edited_tickets
+        return updates
     else:
         print(f"[Human-in-the-Loop] EM Requested Revisions: {comments}")
         return {
             "em_approval_status": "REVISE",
             "em_feedback_comments": comments
         }
+

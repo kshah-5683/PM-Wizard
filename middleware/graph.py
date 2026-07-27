@@ -12,9 +12,13 @@ from middleware.nodes import (
 )
 
 def should_continue(state: AgentState):
-    if state["em_approval_status"] == "APPROVED":
+    if state.get("em_approval_status") == "APPROVED":
         return "push_to_jira"
-    elif state["em_approval_status"] == "REVISE":
+    elif state.get("em_approval_status") == "REVISE":
+        # Hard circuit breaker: Max 3 revision attempts
+        if state.get("attempt_count", 0) >= 3:
+            print("[Graph Routing] Max revision limit (3 attempts) reached. Halting workflow.")
+            return END
         return "estimator"
     return END
 
@@ -28,6 +32,10 @@ def route_after_critic(state: AgentState):
 def route_after_resolution(state: AgentState):
     if state.get("critic_resolved", False):
         return "estimator"
+    # Circuit breaker on PRD amendment loop
+    if state.get("attempt_count", 0) >= 3:
+        print("[Graph Routing] Max revision limit (3 attempts) reached during PRD amendment. Halting workflow.")
+        return END
     return "ingestion"
 
 # Build the LangGraph workflow
