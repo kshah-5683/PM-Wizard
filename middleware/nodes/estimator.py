@@ -160,10 +160,19 @@ async def estimator_node(state: AgentState):
                 print(f"[Estimator Guardrail] Injecting missing Greenfield variance warning for ticket {t['key']}.")
                 t["description"] = f"{warning_banner}\n\n{desc}"
                 
+    # 3. DAG Dependency & Circular Loop Validation
+    from middleware.dag_validator import validate_and_sanitize_dag
+    sanitized_tickets, dag_warnings = validate_and_sanitize_dag(tickets)
+    existing_warnings = list(state.get("warnings") or [])
+    if dag_warnings:
+        print(f"[Estimator Guardrail] Pruned {len(dag_warnings)} invalid/circular dependency reference(s).")
+        existing_warnings.extend(dag_warnings)
+                
     return {
-        "jira_tickets": tickets,
+        "jira_tickets": sanitized_tickets,
         "em_approval_status": "PENDING",
         "attempt_count": attempt,
+        "warnings": existing_warnings,
         "historical_context": similar_tickets,
         "project_mode": project_mode
     }

@@ -479,11 +479,15 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     config = {"configurable": {"thread_id": thread_id}}
     graph = app.state.graph_db
     
-    # Verify organization ownership and role visibility
+    # Verify organization ownership and role visibility & check concurrency status lock
     try:
         history = await db_manager.get_project_history(thread_id, org_id=org_id)
-        if history and not check_visibility(history, role):
-            raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
+        if history:
+            if not check_visibility(history, role):
+                raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
+            current_status = (history.get("status") or "").upper()
+            if current_status in ["PROCESSING", "RESUMING", "IN_PROGRESS"]:
+                raise HTTPException(status_code=409, detail="Plan execution is currently in progress for this session. Concurrent resumptions are locked.")
     except HTTPException:
         raise
     except Exception:
@@ -571,6 +575,39 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     )
     
     return {"status": "RESUMING"}
+
+@app.post("/api/v1/plan/{thread_id}/ticket/{ticket_key}/tech-spec")
+async def generate_ticket_tech_spec_endpoint(
+    thread_id: str, 
+    ticket_key: str,
+    role: str = Depends(get_current_role),
+    org_id: str = Depends(get_current_org)
+):
+    """
+    Generates a lightweight developer technical specification and implementation checklist for a ticket.
+    """
+    graph = app.state.graph_db
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await graph.aget_state(config)
+    
+    values = snapshot.values if snapshot else {}
+    tickets = values.get("jira_tickets") or []
+    target_ticket = next((t for t in tickets if (t.get("key") == ticket_key or t.get("ticket_key") == ticket_key)), None)
+    
+    if not target_ticket:
+        raise HTTPException(status_code=404, detail=f"Ticket '{ticket_key}' not found in planning session.")
+        
+    codebase_summary = values.get("codebase_summary", "")
+    raw_prd = values.get("raw_prd", "")
+    
+    from middleware.tech_spec_generator import generate_ticket_tech_spec
+    try:
+        spec = await generate_ticket_tech_spec(target_ticket, codebase_summary=codebase_summary, raw_prd=raw_prd)
+        return {"status": "SUCCESS", "tech_spec": spec}
+    except Exception as e:
+        logger.error(f"[TechSpec] Endpoint failed for ticket {ticket_key}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate tech spec: {str(e)}")
+
 
 @app.post("/api/v1/plan/{thread_id}/change-request")
 async def create_change_request(thread_id: str, request: ChangeRequestPayload, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
