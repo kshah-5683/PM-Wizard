@@ -20,6 +20,8 @@ export default function Dashboard() {
   const [activePersona, setActivePersona] = useState('PM');
   const [activeOrg, setActiveOrg] = useState('org-google');
   const [currentUser, setCurrentUser] = useState(null);
+  const [isParsingFile, setIsParsingFile] = useState(false);
+  const [uploadSuccessMsg, setUploadSuccessMsg] = useState('');
 
   // Authenticate user on mount
   useEffect(() => {
@@ -37,6 +39,63 @@ export default function Dashboard() {
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
     router.push('/login');
+  };
+
+  const processUploadedFile = async (file) => {
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_SIZE) {
+      setError("File size exceeds the maximum limit of 10MB.");
+      setUploadSuccessMsg('');
+      return;
+    }
+
+    setIsParsingFile(true);
+    setError(null);
+    setUploadSuccessMsg('');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/parse-document`, {
+        method: 'POST',
+        headers: {
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to parse document.");
+      }
+
+      const data = await response.json();
+      setRawPrd(data.markdown);
+      setUploadSuccessMsg(`Successfully parsed ${file.name}! Content loaded below.`);
+    } catch (err) {
+      setError(err.message || "An error occurred during document parsing.");
+    } finally {
+      setIsParsingFile(false);
+    }
+  };
+
+  const handleFileChange = async (e) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      await processUploadedFile(files[0]);
+    }
+  };
+
+  const handleFileDrop = async (e) => {
+    e.preventDefault();
+    e.currentTarget.style.borderColor = 'var(--glass-border)';
+    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.01)';
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      await processUploadedFile(files[0]);
+    }
   };
 
   // Fetch recent projects
@@ -170,6 +229,82 @@ export default function Dashboard() {
                   value={sourceDocument}
                   onChange={(e) => setSourceDocument(e.target.value)}
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Upload Upstream Document (Optional)</label>
+                <div 
+                  style={{
+                    border: '2px dashed var(--glass-border)',
+                    borderRadius: '12px',
+                    padding: '1.5rem',
+                    textAlign: 'center',
+                    background: 'rgba(255, 255, 255, 0.01)',
+                    cursor: 'pointer',
+                    transition: 'var(--transition-smooth)',
+                    position: 'relative'
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.style.borderColor = 'var(--accent-primary)';
+                    e.currentTarget.style.background = 'rgba(99, 102, 241, 0.05)';
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.style.borderColor = 'var(--glass-border)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.01)';
+                  }}
+                  onDrop={handleFileDrop}
+                  onClick={() => document.getElementById('file-upload-input').click()}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--accent-primary)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--glass-border)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.01)';
+                  }}
+                >
+                  <input 
+                    type="file" 
+                    id="file-upload-input" 
+                    style={{ display: 'none' }} 
+                    accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"
+                    onChange={handleFileChange}
+                  />
+                  
+                  {isParsingFile ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
+                      <div className="spinner" style={{ width: '32px', height: '32px', borderWidth: '3px', borderLeftColor: '#fff', borderTopColor: '#fff', animation: 'spin 1s linear infinite' }}></div>
+                      <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                        Parsing document structure, tables, and visual assets...
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--accent-primary)', marginBottom: '0.5rem' }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      <p style={{ fontSize: '0.95rem', fontWeight: 600, color: '#fff', margin: '0 0 0.25rem 0' }}>
+                        Drag & Drop PRD Document or Click to Browse
+                      </p>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                        Supports PDF, DOCX, TXT, MD, and Images (Max 10MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+                {uploadSuccessMsg && (
+                  <div style={{ 
+                    marginTop: '0.75rem', 
+                    fontSize: '0.85rem', 
+                    color: 'var(--success)', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '0.25rem',
+                    fontWeight: 500
+                  }}>
+                    ✅ {uploadSuccessMsg}
+                  </div>
+                )}
               </div>
 
               <div className="form-group">

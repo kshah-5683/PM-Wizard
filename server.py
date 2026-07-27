@@ -5,7 +5,7 @@ from typing import Optional, Literal, List
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -680,3 +680,31 @@ async def list_projects(role: str = Depends(get_current_role), org_id: str = Dep
     except Exception as e:
         logger.error(f"[DB] Failed to list projects: {e}")
         return {"projects": []}
+
+@app.post("/api/v1/parse-document")
+async def parse_document(
+    file: UploadFile = File(...),
+    role: str = Depends(get_current_role),
+    org_id: str = Depends(get_current_org)
+):
+    if role != "PM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Product Managers (PM) can upload and parse document files.")
+        
+    # Enforce upper limit of file size to be max 10MB
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    contents = await file.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="File size exceeds the maximum limit of 10MB.")
+        
+    filename = file.filename or ""
+    ext = filename.split('.')[-1].lower() if '.' in filename else ""
+    if ext not in ('pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp'):
+        raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a PDF, DOCX, TXT, MD, or Image file.")
+        
+    try:
+        from middleware.document_parser import process_uploaded_document
+        markdown_content = await process_uploaded_document(contents, ext)
+        return {"markdown": markdown_content, "filename": filename}
+    except Exception as e:
+        logger.error(f"[API] Failed to parse document: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")

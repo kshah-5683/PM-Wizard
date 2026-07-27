@@ -212,5 +212,57 @@ class TestServerRoutes(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    @patch("middleware.document_parser.process_uploaded_document", new_callable=AsyncMock)
+    async def test_parse_document_endpoint_success(self, mock_process):
+        mock_process.return_value = "# Test Document parsed successfully"
+        
+        file_content = b"This is a text content"
+        files = {"file": ("test.txt", file_content, "text/plain")}
+        
+        response = self.client.post(
+            "/api/v1/parse-document",
+            files=files,
+            headers={"X-User-Role": "PM", "X-Org-Id": "org-google"}
+        )
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["markdown"], "# Test Document parsed successfully")
+        self.assertEqual(response.json()["filename"], "test.txt")
+        mock_process.assert_called_once_with(file_content, "txt")
+
+    async def test_parse_document_endpoint_role_restrictions(self):
+        file_content = b"This is a text content"
+        files = {"file": ("test.txt", file_content, "text/plain")}
+        
+        response = self.client.post(
+            "/api/v1/parse-document",
+            files=files,
+            headers={"X-User-Role": "DEV", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Only Product Managers", response.json()["detail"])
+
+    async def test_parse_document_endpoint_file_size_limit(self):
+        large_content = b"a" * (10 * 1024 * 1024 + 1)
+        files = {"file": ("large.txt", large_content, "text/plain")}
+        
+        response = self.client.post(
+            "/api/v1/parse-document",
+            files=files,
+            headers={"X-User-Role": "PM", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("exceeds the maximum limit", response.json()["detail"])
+
+    async def test_parse_document_endpoint_unsupported_format(self):
+        files = {"file": ("test.exe", b"executable bytes", "application/octet-stream")}
+        response = self.client.post(
+            "/api/v1/parse-document",
+            files=files,
+            headers={"X-User-Role": "PM", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unsupported file format", response.json()["detail"])
+
 if __name__ == "__main__":
     unittest.main()
