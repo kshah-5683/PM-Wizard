@@ -427,6 +427,13 @@ class DatabaseManager:
     ):
         if not self.pool:
             return
+            
+        import uuid
+        try:
+            user_uuid = uuid.UUID(str(user_id))
+        except ValueError:
+            user_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(user_id))
+
         enc_access = self.encrypt_token(access_token)
         enc_refresh = self.encrypt_token(refresh_token) if refresh_token else None
         scopes_val = list(scopes) if scopes else None
@@ -450,18 +457,25 @@ class DatabaseManager:
             async with conn.cursor() as cur:
                 await cur.execute(
                     query,
-                    (user_id, provider, enc_access, enc_refresh, expires_at, scopes_val, tenant_id, org_id)
+                    (user_uuid, provider, enc_access, enc_refresh, expires_at, scopes_val, tenant_id, org_id)
                 )
 
     async def get_integration(self, user_id: str, provider: str, org_id: str = 'default-org') -> Optional[dict]:
         if not self.pool:
             return None
+            
+        import uuid
+        try:
+            user_uuid = uuid.UUID(str(user_id))
+        except ValueError:
+            user_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(user_id))
+
         query = """
             SELECT * FROM user_integrations WHERE user_id = %s AND provider = %s AND org_id = %s;
         """
         async with self.get_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(query, (user_id, provider, org_id))
+                await cur.execute(query, (user_uuid, provider, org_id))
                 row = await cur.fetchone()
                 if row:
                     row_copy = dict(row)
@@ -470,6 +484,24 @@ class DatabaseManager:
                         row_copy["refresh_token"] = self.decrypt_token(row_copy["refresh_token"])
                     return row_copy
                 return None
+
+    async def delete_integration(self, user_id: str, provider: str, org_id: str = 'default-org') -> bool:
+        if not self.pool:
+            return False
+            
+        import uuid
+        try:
+            user_uuid = uuid.UUID(str(user_id))
+        except ValueError:
+            user_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(user_id))
+
+        query = """
+            DELETE FROM user_integrations WHERE user_id = %s AND provider = %s AND org_id = %s;
+        """
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (user_uuid, provider, org_id))
+                return True
 
 # Global database manager instance
 db_manager = DatabaseManager()

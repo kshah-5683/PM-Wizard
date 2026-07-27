@@ -22,6 +22,12 @@ export default function Dashboard() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isParsingFile, setIsParsingFile] = useState(false);
   const [uploadSuccessMsg, setUploadSuccessMsg] = useState('');
+  const [integrations, setIntegrations] = useState([
+    { provider: 'github', connected: false },
+    { provider: 'notion', connected: false },
+    { provider: 'atlassian', connected: false }
+  ]);
+  const [isFetchingIntegrations, setIsFetchingIntegrations] = useState(false);
 
   // Authenticate user on mount
   useEffect(() => {
@@ -95,6 +101,96 @@ export default function Dashboard() {
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       await processUploadedFile(files[0]);
+    }
+  };
+
+  const fetchIntegrations = async () => {
+    const userStr = localStorage.getItem('currentUser');
+    if (!userStr) return;
+    const user = JSON.parse(userStr);
+    
+    setIsFetchingIntegrations(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/auth/integrations`, {
+        headers: {
+          'user-id': user.email,
+          'X-User-Role': user.role,
+          'X-Org-Id': user.orgId
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIntegrations(data.integrations || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch integrations:", err);
+    } finally {
+      setIsFetchingIntegrations(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchIntegrations();
+    }
+  }, [currentUser, activeOrg]);
+
+  // Handle redirect callback message from OAuth redirects
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const integration = urlParams.get('integration');
+    const provider = urlParams.get('provider');
+    const message = urlParams.get('message');
+
+    if (integration === 'success') {
+      setUploadSuccessMsg(`Successfully connected your ${provider} account!`);
+      // Clear query params to make URL clean
+      window.history.replaceState({}, document.title, window.location.pathname);
+      fetchIntegrations();
+    } else if (integration === 'error') {
+      setError(`Failed to connect ${provider}: ${message || 'Unknown error'}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [currentUser]);
+
+  const handleConnect = async (provider) => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/auth/${provider}/connect?user_id=${currentUser.email}&org_id=${activeOrg}`);
+      if (res.ok) {
+        const data = await res.json();
+        window.location.href = data.url;
+      } else {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || `Failed to fetch connection URL for ${provider}.`);
+      }
+    } catch (err) {
+      setError(`Failed to connect ${provider}: ${err.message}`);
+    }
+  };
+
+  const handleDisconnect = async (provider) => {
+    if (!currentUser) return;
+    if (!confirm(`Are you sure you want to disconnect your ${provider} integration?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/auth/${provider}`, {
+        method: 'DELETE',
+        headers: {
+          'user-id': currentUser.email,
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        }
+      });
+      if (res.ok) {
+        setUploadSuccessMsg(`Successfully disconnected ${provider}.`);
+        fetchIntegrations();
+      } else {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || `Failed to disconnect ${provider}.`);
+      }
+    } catch (err) {
+      setError(`Failed to disconnect: ${err.message}`);
     }
   };
 
@@ -338,45 +434,125 @@ export default function Dashboard() {
             </form>
           </div>
 
-          {/* Sidebar History list */}
-          <div className="glass-panel history-card">
-            <h2 className="history-title">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px' }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Recent Sessions
-            </h2>
-            
-            <div className="history-list">
-              {projects.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
-                  No active or historical planning runs found in the database.
-                </p>
-              ) : (
-                projects.map((proj) => (
-                  <div 
-                    key={proj.thread_id} 
-                    className="history-item"
-                    onClick={() => router.push(`/plan/${proj.thread_id}`)}
-                  >
-                    <div className="history-item-header">
-                      <span className="history-item-title">{proj.title || "Untitled Session"}</span>
-                      <span className={`badge ${getStatusBadgeClass(proj.status)}`}>
-                        {proj.status.replace('_', ' ')}
-                      </span>
+          {/* Right Sidebar containing both Integrations and Recent Sessions */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            {/* Integrations Card */}
+            <div className="glass-panel" style={{ padding: '1.5rem' }}>
+              <h2 className="history-title" style={{ marginBottom: '1.25rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.75rem' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '8px', color: 'var(--accent-primary)' }}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                Connected Systems
+              </h2>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {integrations.map((integration) => {
+                  const p = integration.provider;
+                  const isConnected = integration.connected;
+                  const tenantId = integration.tenant_id;
+                  
+                  // Visual details per provider
+                  let title = "System";
+                  let icon = "🔗";
+                  if (p === 'github') { title = "GitHub"; icon = "🐱"; }
+                  else if (p === 'notion') { title = "Notion"; icon = "📓"; }
+                  else if (p === 'atlassian') { title = "Atlassian (Jira/Confluence)"; icon = "➿"; }
+
+                  return (
+                    <div 
+                      key={p}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '0.75rem 1rem',
+                        borderRadius: '10px',
+                        background: isConnected ? 'rgba(16, 185, 129, 0.02)' : 'rgba(255, 255, 255, 0.01)',
+                        border: isConnected ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid var(--glass-border)',
+                        transition: 'var(--transition-smooth)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', maxWidth: '70%' }}>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span>{icon}</span> {title}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: isConnected ? 'var(--success)' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {isConnected ? `Connected: ${tenantId || 'Active'}` : 'Disconnected'}
+                        </span>
+                      </div>
+
+                      <div>
+                        {isConnected ? (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ 
+                              padding: '4px 10px', 
+                              fontSize: '0.75rem', 
+                              borderColor: 'rgba(239, 68, 68, 0.2)', 
+                              color: '#f87171',
+                              background: 'transparent'
+                            }}
+                            onClick={() => handleDisconnect(p)}
+                          >
+                            Disconnect
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            style={{ padding: '4px 12px', fontSize: '0.75rem', fontWeight: 500 }}
+                            onClick={() => handleConnect(p)}
+                          >
+                            Link
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span className="history-item-date">
-                        {new Date(proj.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                        {proj.total_story_points ? `${proj.total_story_points} pts` : ''}
-                      </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Sidebar History list */}
+            <div className="glass-panel history-card" style={{ maxHeight: '420px' }}>
+              <h2 className="history-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px' }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Recent Sessions
+              </h2>
+              
+              <div className="history-list">
+                {projects.length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>
+                    No active or historical planning runs found in the database.
+                  </p>
+                ) : (
+                  projects.map((proj) => (
+                    <div 
+                      key={proj.thread_id} 
+                      className="history-item"
+                      onClick={() => router.push(`/plan/${proj.thread_id}`)}
+                    >
+                      <div className="history-item-header">
+                        <span className="history-item-title">{proj.title || "Untitled Session"}</span>
+                        <span className={`badge ${getStatusBadgeClass(proj.status)}`}>
+                          {proj.status.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="history-item-date">
+                          {new Date(proj.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                          {proj.total_story_points ? `${proj.total_story_points} pts` : ''}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
+
       ) : (
         <div className="glass-panel" style={{ padding: '2.5rem', animation: 'slideIn 0.5s ease-out' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>

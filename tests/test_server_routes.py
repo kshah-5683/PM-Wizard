@@ -264,5 +264,50 @@ class TestServerRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Unsupported file format", response.json()["detail"])
 
+    @patch("server.db_manager")
+    async def test_list_user_integrations(self, mock_db):
+        mock_db.get_integration = AsyncMock(side_effect=lambda user_id, provider, org_id: {
+            "provider": "github",
+            "tenant_id": "test-github-user",
+            "created_at": "2026-07-27"
+        } if provider == "github" else None)
+        
+        response = self.client.get(
+            "/api/v1/auth/integrations",
+            headers={"user-id": "pm@wizard.com", "X-User-Role": "PM", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("integrations", data)
+        self.assertEqual(len(data["integrations"]), 3)
+        
+        github_opt = next(i for i in data["integrations"] if i["provider"] == "github")
+        notion_opt = next(i for i in data["integrations"] if i["provider"] == "notion")
+        
+        self.assertTrue(github_opt["connected"])
+        self.assertEqual(github_opt["tenant_id"], "test-github-user")
+        self.assertFalse(notion_opt["connected"])
+
+    @patch("server.db_manager")
+    async def test_disconnect_provider_success(self, mock_db):
+        mock_db.delete_integration = AsyncMock(return_value=True)
+        
+        response = self.client.delete(
+            "/api/v1/auth/github",
+            headers={"user-id": "pm@wizard.com", "X-User-Role": "PM", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "SUCCESS")
+        mock_db.delete_integration.assert_called_once_with("pm@wizard.com", "github", "org-google")
+
+    @patch("server.db_manager")
+    async def test_disconnect_provider_role_block(self, mock_db):
+        response = self.client.delete(
+            "/api/v1/auth/github",
+            headers={"user-id": "dev@wizard.com", "X-User-Role": "DEV", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Only Product Managers", response.json()["detail"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,9 @@ from typing import Optional, Literal, List
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
+import urllib.parse
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends, UploadFile, File
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -708,3 +710,83 @@ async def parse_document(
     except Exception as e:
         logger.error(f"[API] Failed to parse document: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+@app.get("/api/v1/auth/{provider}/connect")
+async def connect_provider(
+    provider: str,
+    user_id: str,
+    org_id: str
+):
+    try:
+        from middleware.oauth import get_auth_url
+        url = get_auth_url(provider, user_id, org_id)
+        return {"url": url}
+    except Exception as e:
+        logger.error(f"[OAuth] Failed to generate auth URL for {provider}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/v1/auth/{provider}/callback")
+async def oauth_callback(
+    provider: str,
+    code: str,
+    state: str
+):
+    try:
+        from middleware.oauth import process_oauth_callback
+        await process_oauth_callback(provider, code, state)
+        return RedirectResponse(url=f"{FRONTEND_URL}/?integration=success&provider={provider}")
+    except Exception as e:
+        logger.error(f"[OAuth] Callback failed for {provider}: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?integration=error&provider={provider}&message={urllib.parse.quote(str(e))}")
+
+@app.get("/api/v1/auth/integrations")
+async def list_user_integrations(
+    user_id: str = Header(..., description="The user's UUID"),
+    org_id: str = Depends(get_current_org)
+):
+    providers = ["github", "notion", "atlassian"]
+    results = []
+    for p in providers:
+        try:
+            integration = await db_manager.get_integration(user_id, p, org_id)
+            if integration:
+                results.append({
+                    "provider": p,
+                    "connected": True,
+                    "tenant_id": integration.get("tenant_id"),
+                    "connected_at": integration.get("created_at")
+                })
+            else:
+                results.append({
+                    "provider": p,
+                    "connected": False
+                })
+        except Exception as e:
+            logger.error(f"[API] Failed to fetch integration for {p}: {e}")
+            results.append({
+                "provider": p,
+                "connected": False
+            })
+    return {"integrations": results}
+
+@app.delete("/api/v1/auth/{provider}")
+async def disconnect_provider(
+    provider: str,
+    user_id: str = Header(..., description="The user's UUID"),
+    org_id: str = Depends(get_current_org),
+    role: str = Depends(get_current_role)
+):
+    if role != "PM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Product Managers can disconnect integrations.")
+    try:
+        success = await db_manager.delete_integration(user_id, provider, org_id)
+        if success:
+            return {"status": "SUCCESS", "message": f"Successfully disconnected {provider}."}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to delete integration.")
+    except Exception as e:
+        logger.error(f"[API] Disconnect failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
