@@ -38,13 +38,8 @@ class TestIngestionOptimizations(unittest.IsolatedAsyncioTestCase):
         mock_extract.return_value = ["react"]
         mock_inspect.return_value = "codebase summary"
         mock_profile.return_value = "profile summary"
-
-        # State without visual assets
-        state = {
-            "raw_prd": "This PRD does not contain any images.",
-            "attempt_count": 0
-        }
-
+        
+        state = {"raw_prd": "No images here", "project_mode": "STANDARD"}
         res = await ingestion_node(state)
         
         # Verify visual bypass was activated (prd_images_context is empty)
@@ -55,5 +50,32 @@ class TestIngestionOptimizations(unittest.IsolatedAsyncioTestCase):
         # Verify extract and inspect was called with extracted keywords
         mock_extract.assert_called_once_with(state["raw_prd"])
 
+    @patch("middleware.nodes.ingester.generate_greenfield_blueprint")
+    @patch("middleware.nodes.ingester.extract_technology_keywords")
+    @patch("middleware.nodes.ingester.inspect_codebase")
+    @patch("middleware.nodes.ingester.profile_repository")
+    async def test_ingestion_node_greenfield_flow(self, mock_profile, mock_inspect, mock_extract, mock_blueprint):
+        mock_extract.return_value = ["react"]
+        mock_blueprint.return_value = "greenfield blueprint content"
+        
+        state = {
+            "raw_prd": "Building a new dashboard app.",
+            "attempt_count": 0,
+            "project_mode": "GREENFIELD"
+        }
+        
+        res = await ingestion_node(state)
+        
+        # Verify it bypassed standard inspect codebase and profiling
+        mock_inspect.assert_not_called()
+        mock_profile.assert_not_called()
+        
+        # Verify it generated a greenfield blueprint instead
+        mock_blueprint.assert_called_once_with(state["raw_prd"], ["react"])
+        self.assertEqual(res["codebase_summary"], "greenfield blueprint content")
+        self.assertEqual(res["project_mode"], "GREENFIELD")
+        self.assertIn("Greenfield Project", res["workspace_profile"])
+
 if __name__ == "__main__":
     unittest.main()
+

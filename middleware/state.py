@@ -21,6 +21,8 @@ class AgentState(TypedDict):
     user_id: Optional[str]  # NEW: User UUID for resolving OAuth connections
     github_repo: Optional[str]  # NEW: Target remote repository (owner/repo)
     jira_project_key: Optional[str]  # NEW: Target Jira project key (e.g. 'PROJ')
+    project_mode: Optional[str]  # 'BROWNFIELD' or 'GREENFIELD'
+
 
 # Pydantic models for structured output generation
 class JiraTicket(BaseModel):

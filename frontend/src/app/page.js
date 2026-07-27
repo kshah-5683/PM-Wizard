@@ -23,6 +23,11 @@ export default function Dashboard() {
   const [isParsingFile, setIsParsingFile] = useState(false);
   const [isParsingUrl, setIsParsingUrl] = useState(false);
   const [uploadSuccessMsg, setUploadSuccessMsg] = useState('');
+  const [projectMode, setProjectMode] = useState('BROWNFIELD');
+  const [githubRepo, setGithubRepo] = useState('');
+  const [jiraProjectKey, setJiraProjectKey] = useState('');
+  const [sprintConstraints, setSprintConstraints] = useState('');
+
   const [integrations, setIntegrations] = useState([
     { provider: 'github', connected: false },
     { provider: 'notion', connected: false },
@@ -286,8 +291,13 @@ export default function Dashboard() {
         body: JSON.stringify({
           raw_prd: rawPrd || null,
           source_document: sourceDocument || null,
+          project_mode: projectMode,
+          github_repo: githubRepo || null,
+          jira_project_key: jiraProjectKey || null,
+          sprint_constraints: sprintConstraints || null
         }),
       });
+
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -463,6 +473,65 @@ export default function Dashboard() {
                 )}
               </div>
 
+              {/* Project Planning Mode Selector */}
+              <div className="form-group">
+                <label className="form-label">Planning Mode</label>
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setProjectMode('BROWNFIELD')}
+                    className={`btn ${projectMode === 'BROWNFIELD' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.75rem', fontWeight: 600 }}
+                  >
+                    📁 Brownfield (Exist. Codebase)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProjectMode('GREENFIELD')}
+                    className={`btn ${projectMode === 'GREENFIELD' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.75rem', fontWeight: 600 }}
+                  >
+                    🌱 Greenfield (New Project)
+                  </button>
+                </div>
+              </div>
+
+              {projectMode === 'BROWNFIELD' && (
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem' }}>
+                  <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                    <label className="form-label">GitHub Repository (Optional)</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      placeholder="owner/repo (e.g. facebook/react)"
+                      value={githubRepo}
+                      onChange={(e) => setGithubRepo(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                    <label className="form-label">Jira Project Key (Optional)</label>
+                    <input 
+                      type="text" 
+                      className="input-field" 
+                      placeholder="e.g. PROJ"
+                      value={jiraProjectKey}
+                      onChange={(e) => setJiraProjectKey(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label">Sprint Constraints (Optional)</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  placeholder="e.g. Limit scope to 3 sprints, focus on performance, standard tech stack"
+                  value={sprintConstraints}
+                  onChange={(e) => setSprintConstraints(e.target.value)}
+                />
+              </div>
+
               <div className="form-group">
                 <label className="form-label">PRD Markdown Content</label>
                 <textarea 
@@ -472,6 +541,7 @@ export default function Dashboard() {
                   placeholder="# Project Name..."
                 />
               </div>
+
 
               <button 
                 type="submit" 

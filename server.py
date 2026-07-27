@@ -69,6 +69,8 @@ class StartPlanRequest(BaseModel):
     custom_tags: Optional[List[str]] = Field(None, description="Optional custom tags list.")
     github_repo: Optional[str] = Field(None, description="Optional remote GitHub repository name in format 'owner/repo'.")
     jira_project_key: Optional[str] = Field(None, description="Optional target Jira project key (e.g., 'PROJ').")
+    project_mode: Optional[Literal["BROWNFIELD", "GREENFIELD"]] = Field(None, description="Optional project lifecycle mode (BROWNFIELD or GREENFIELD).")
+
 
 class ParseUrlRequest(BaseModel):
     url: str = Field(..., description="The Notion or Confluence URL to fetch and parse.")
@@ -172,8 +174,9 @@ async def handle_after_execution(graph, thread_id: str):
         # Limit size to prevent database row-limit warnings
         ai_summary_trimmed = ai_summary[:500] + ("..." if len(ai_summary) > 500 else "")
         
-        # Retrieve original title
+        # Retrieve original title and project mode
         title = values.get("raw_prd", "").splitlines()[0].lstrip("#* ").strip()[:100] or "Sprint Plan"
+        project_mode = values.get("project_mode")
         
         # Save state metrics to project history table (Track B)
         try:
@@ -189,8 +192,10 @@ async def handle_after_execution(graph, thread_id: str):
                     "total_story_points": total_story_points
                 },
                 ai_summary=ai_summary_trimmed,
-                org_id=org_id
+                org_id=org_id,
+                project_mode=project_mode
             )
+
             logger.info(f"[PLAN] Session {thread_id} status updated to {status_str}.")
         except Exception as e:
             logger.error(f"[DB] Failed to save metadata to project_history: {e}")
@@ -286,7 +291,8 @@ async def start_plan(
         "org_id": org_id,
         "user_id": user_id,
         "github_repo": request.github_repo,
-        "jira_project_key": request.jira_project_key
+        "jira_project_key": request.jira_project_key,
+        "project_mode": request.project_mode
     }
     
     title = f"Plan for {raw_prd.splitlines()[0][:50]}" if raw_prd else "New Sprint Plan"
@@ -301,8 +307,10 @@ async def start_plan(
             status="PROCESSING",
             metrics={},
             ai_summary="",
-            org_id=org_id
+            org_id=org_id,
+            project_mode=request.project_mode
         )
+
     except Exception as e:
         logger.warning(f"[DB] Skipping history write (running in memory): {e}")
 
@@ -392,7 +400,9 @@ async def get_plan_status(thread_id: str, org_id: str = Depends(get_current_org)
         "paused_waiting_input": bool(snapshot.next) if snapshot else False,
         "interrupt_payload": interrupt_payload,
         "sent_to_em": history.get("sent_to_em") if history else False,
-        "shared_with_dev": history.get("shared_with_dev") if history else False
+        "shared_with_dev": history.get("shared_with_dev") if history else False,
+        "project_mode": history.get("project_mode") if history else values.get("project_mode")
+
     }
 
 @app.post("/api/v1/plan/{thread_id}/resume")

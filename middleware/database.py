@@ -60,6 +60,7 @@ class DatabaseManager:
                             ai_summary TEXT,
                             sent_to_em BOOLEAN DEFAULT FALSE,
                             shared_with_dev BOOLEAN DEFAULT FALSE,
+                            project_mode TEXT,
                             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         );
@@ -95,6 +96,12 @@ class DatabaseManager:
                         await cur.execute("ALTER TABLE historical_tickets ADD COLUMN IF NOT EXISTS sprint_plan_id TEXT;")
                     except Exception as e:
                         print(f"[Database] Failed to alter historical_tickets: {e}")
+                        
+                    try:
+                        await cur.execute("ALTER TABLE project_history ADD COLUMN IF NOT EXISTS project_mode TEXT;")
+                    except Exception as e:
+                        print(f"[Database] Failed to alter project_history for project_mode: {e}")
+
                         
                     # Create ticket_change_requests table
                     await cur.execute("""
@@ -242,12 +249,12 @@ class DatabaseManager:
         async with self.pool.connection() as conn:
             yield conn
 
-    async def save_project_history(self, thread_id: str, title: str, source_doc: str, status: str, metrics: dict, ai_summary: str, org_id: str = 'default-org'):
+    async def save_project_history(self, thread_id: str, title: str, source_doc: str, status: str, metrics: dict, ai_summary: str, org_id: str = 'default-org', project_mode: Optional[str] = None):
         query = """
             INSERT INTO project_history (
-                thread_id, org_id, title, source_document, status, total_epics, total_stories, total_story_points, ai_summary
+                thread_id, org_id, title, source_document, status, total_epics, total_stories, total_story_points, ai_summary, project_mode
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (thread_id) DO UPDATE SET
                 org_id = EXCLUDED.org_id,
@@ -256,6 +263,7 @@ class DatabaseManager:
                 total_stories = EXCLUDED.total_stories,
                 total_story_points = EXCLUDED.total_story_points,
                 ai_summary = EXCLUDED.ai_summary,
+                project_mode = COALESCE(EXCLUDED.project_mode, project_history.project_mode),
                 updated_at = NOW();
         """
         async with self.get_connection() as conn:
@@ -271,9 +279,11 @@ class DatabaseManager:
                         metrics.get("total_epics", 0),
                         metrics.get("total_stories", 0),
                         metrics.get("total_story_points", 0),
-                        ai_summary
+                        ai_summary,
+                        project_mode
                     )
                 )
+
 
     async def update_project_status(self, thread_id: str, status: str):
         query = """

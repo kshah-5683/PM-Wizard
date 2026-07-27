@@ -663,9 +663,23 @@ export default function PlanDetail() {
             
             <div style={{ marginTop: '1rem' }}>
               <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>Source Document:</h4>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '0.75rem' }}>
                 {planData.source_document || 'Direct Text Input'}
               </p>
+              
+              <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>Planning Mode:</h4>
+              <span style={{ 
+                fontSize: '0.8rem', 
+                fontWeight: 600, 
+                padding: '4px 10px', 
+                borderRadius: '6px', 
+                display: 'inline-block',
+                background: planData.project_mode === 'GREENFIELD' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+                color: planData.project_mode === 'GREENFIELD' ? '#10b981' : '#3b82f6',
+                border: planData.project_mode === 'GREENFIELD' ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(59, 130, 246, 0.2)'
+              }}>
+                {planData.project_mode === 'GREENFIELD' ? '🌱 Greenfield Mode' : '📁 Brownfield Mode'}
+              </span>
             </div>
 
             {historicalTicketsCount > 0 && (
@@ -679,6 +693,24 @@ export default function PlanDetail() {
 
           {/* Main Sandbox: Tickets / Gaps view */}
           <div className="glass-panel tickets-container">
+            {planData.project_mode === 'GREENFIELD' && (
+              <div style={{ 
+                marginBottom: '1.25rem', 
+                padding: '0.75rem 1.25rem', 
+                borderRadius: '8px', 
+                background: 'rgba(245, 158, 11, 0.1)', 
+                border: '1px solid rgba(245, 158, 11, 0.2)',
+                color: '#fbbf24',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontWeight: 500
+              }}>
+                <span>⚠️</span>
+                <span><strong>Greenfield Mode Active:</strong> Story points estimated using industry-standard baseline T-shirt sizing. Please note that zero-to-one implementation risk carries a higher variance.</span>
+              </div>
+            )}
             <div style={{ display: 'flex', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', marginBottom: '1.5rem', gap: '1rem' }}>
               <button 
                 className="btn" 
@@ -980,6 +1012,25 @@ export default function PlanDetail() {
           </p>
           
           <div style={{ width: '100%', marginTop: '2rem', borderTop: '1px solid var(--glass-border)', paddingTop: '2rem' }}>
+            {planData.project_mode === 'GREENFIELD' && (
+              <div style={{ 
+                marginBottom: '1.25rem', 
+                padding: '0.75rem 1.25rem', 
+                borderRadius: '8px', 
+                background: 'rgba(245, 158, 11, 0.1)', 
+                border: '1px solid rgba(245, 158, 11, 0.2)',
+                color: '#fbbf24',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontWeight: 500,
+                textAlign: 'left'
+              }}>
+                <span>⚠️</span>
+                <span><strong>Greenfield Mode Variance:</strong> Story points estimated using industry-standard baseline T-shirt sizing. Please note that zero-to-one implementation risk carries a higher variance.</span>
+              </div>
+            )}
             <h3 style={{ fontSize: '1.1rem', marginBottom: '1.25rem', fontWeight: 600, textAlign: 'center' }}>
               Synchronized Backlog ({planData.draft_tickets?.length || 0} Tickets)
             </h3>

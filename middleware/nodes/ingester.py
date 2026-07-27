@@ -97,6 +97,40 @@ def profile_repository(project_root: str = None) -> str:
         
     return " | ".join(summary_parts)
 
+async def generate_greenfield_blueprint(raw_prd: str, keywords: list) -> str:
+    """
+    Generates a foundational system architecture, folder structure, and database schema recommendations
+    for Greenfield projects based on the PRD and key technology concepts.
+    """
+    from middleware.config import PRIMARY_MODEL
+    from middleware.llm import aresilient_completion
+    
+    system_prompt = (
+        "You are a Principal Software Architect. The user is starting a brand new project (Greenfield Mode) from scratch.\n"
+        "Analyze the provided Product Requirements Document (PRD) and tech stack keywords.\n"
+        "Generate a foundational design blueprint containing:\n"
+        "1. Recommended System Architecture (monolith, serverless, SPA/Backend structure, etc.).\n"
+        "2. Database Schema Recommendations (tables, relations, primary/foreign keys, types) suitable for Postgres/Supabase.\n"
+        "3. Recommended Folder Structure / Repository Layout.\n"
+        "4. Technology stack alignment.\n"
+        "Make it extremely structured, concise, and professional. Return markdown format."
+    )
+    
+    user_prompt = f"PRD:\n{raw_prd}\n\nKeywords: {', '.join(keywords) if keywords else 'None'}"
+    
+    try:
+        response = await aresilient_completion(
+            model=PRIMARY_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[Ingestion] Greenfield blueprint generation failed: {e}")
+        return "Greenfield Mode: Recommended architecture and database schema blueprint placeholder."
+
 async def ingestion_node(state: AgentState):
     print("\n--- [Ingestion Node] Ingesting Upstream PRD ---")
     print("Ingested PRD Content successfully.")
@@ -158,23 +192,45 @@ async def ingestion_node(state: AgentState):
         except Exception as e:
             print(f"[Ingestion] Failed to resolve GitHub repository details: {e}")
 
-    # 4. Parallel codebase scan and repository profiling
-    try:
-        # inspect_codebase is async, profile_repository is sync (CPU-bound local scan fallback)
-        codebase_task = inspect_codebase(raw_prd, None, keywords, github_repo, github_token)
-        profile_task = asyncio.to_thread(profile_repository)
-        
-        codebase_summary, workspace_profile = await asyncio.gather(codebase_task, profile_task)
-        print(f"[Ingestion] Codebase scan & repository profiling completed.")
-    except Exception as e:
-        print(f"[Ingestion] Ingestion tasks failed ({e}), continuing with defaults.")
-        codebase_summary = None
-        workspace_profile = "Workspace profiling failed."
+    # Determine project_mode: Greenfield vs Brownfield
+    project_mode = state.get("project_mode")
+    if not project_mode:
+        if github_repo:
+            project_mode = "BROWNFIELD"
+        else:
+            project_mode = "GREENFIELD"
+    print(f"[Ingestion] Planning Mode resolved to: {project_mode}")
+
+    # 4. Parallel codebase scan and repository profiling OR Greenfield architecture generation
+    if project_mode == "GREENFIELD":
+        print("[Ingestion] Greenfield Mode active. Skipping codebase inspection and generating foundational architecture blueprint...")
+        try:
+            codebase_summary = await generate_greenfield_blueprint(raw_prd, keywords)
+            workspace_profile = "Greenfield Project: Zero-to-One Lifecycle (No repository or codebase template connected)"
+            print("[Ingestion] Greenfield architectural blueprint generated.")
+        except Exception as e:
+            print(f"[Ingestion] Failed to generate Greenfield blueprint ({e}), continuing with defaults.")
+            codebase_summary = "Greenfield Mode: Recommended architecture and database schema blueprint placeholder."
+            workspace_profile = "Greenfield Project: Zero-to-One Lifecycle"
+    else:
+        try:
+            # inspect_codebase is async, profile_repository is sync (CPU-bound local scan fallback)
+            codebase_task = inspect_codebase(raw_prd, None, keywords, github_repo, github_token)
+            profile_task = asyncio.to_thread(profile_repository)
+            
+            codebase_summary, workspace_profile = await asyncio.gather(codebase_task, profile_task)
+            print(f"[Ingestion] Codebase scan & repository profiling completed.")
+        except Exception as e:
+            print(f"[Ingestion] Ingestion tasks failed ({e}), continuing with defaults.")
+            codebase_summary = None
+            workspace_profile = "Workspace profiling failed."
         
     return {
         "attempt_count": state.get("attempt_count", 0),
         "codebase_summary": codebase_summary,
         "workspace_profile": workspace_profile,
         "prd_images_context": prd_images_context,
-        "github_repo": github_repo
+        "github_repo": github_repo,
+        "project_mode": project_mode
     }
+
