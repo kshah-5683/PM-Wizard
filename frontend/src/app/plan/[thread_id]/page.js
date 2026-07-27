@@ -29,6 +29,25 @@ export default function PlanDetail() {
   
   // Custom loading message rotation
   const [loadingMessage, setLoadingMessage] = useState('Initializing agent loops...');
+
+  const getHeaders = (extra = {}) => {
+    const headers = {
+      'X-User-Role': activePersona,
+      'X-Org-Id': activeOrg,
+      ...extra
+    };
+    const userStr = localStorage.getItem('currentUser');
+    if (userStr) {
+      const u = JSON.parse(userStr);
+      headers['user-id'] = u.email;
+    }
+    const token = localStorage.getItem('supabaseToken');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   
   useEffect(() => {
     const messages = [
@@ -57,9 +76,7 @@ export default function PlanDetail() {
     const fetchChangeRequests = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
-          headers: {
-            'X-Org-Id': activeOrg
-          }
+          headers: getHeaders()
         });
         if (res.ok) {
           const data = await res.json();
@@ -73,9 +90,7 @@ export default function PlanDetail() {
     const fetchStatus = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
-          headers: {
-            'X-Org-Id': activeOrg
-          }
+          headers: getHeaders()
         });
         if (!res.ok) {
           if (res.status === 404) {
@@ -152,6 +167,7 @@ export default function PlanDetail() {
 
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
+    localStorage.removeItem('supabaseToken');
     router.push('/login');
   };
 
@@ -167,11 +183,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-request/${requestId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ status }),
       });
 
@@ -182,9 +194,7 @@ export default function PlanDetail() {
       // Refresh list
       try {
         const resList = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
-          headers: {
-            'X-Org-Id': activeOrg
-          }
+          headers: getHeaders()
         });
         if (resList.ok) {
           const dataList = await resList.json();
@@ -194,9 +204,7 @@ export default function PlanDetail() {
       
       // Refresh status to pull modified tickets list
       const resStatus = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
-        headers: {
-          'X-Org-Id': activeOrg
-        }
+        headers: getHeaders()
       });
       if (resStatus.ok) {
         const dataStatus = await resStatus.json();
@@ -220,11 +228,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-request`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           ticket_key: selectedTicketForChange.key,
           developer_name: devFormName,
@@ -248,9 +252,7 @@ export default function PlanDetail() {
       // Refresh list
       try {
         const resList = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
-          headers: {
-            'X-Org-Id': activeOrg
-          }
+          headers: getHeaders()
         });
         if (resList.ok) {
           const dataList = await resList.json();
@@ -277,11 +279,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/resume`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           action,
           amended_prd: action === 'amend' ? payloadValue : null,
@@ -319,11 +317,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/resume`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           decision,
           comments: decision === 'revise' ? comments : (comments || "Approved"),
@@ -356,11 +350,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/start`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           raw_prd: planData?.raw_prd || amendedPrd || "",
           thread_id: thread_id
@@ -400,11 +390,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/propose-ai-changes`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           prompt: devAiPrompt
         }),
@@ -422,9 +408,7 @@ export default function PlanDetail() {
       // Refresh change requests list
       try {
         const resList = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/change-requests`, {
-          headers: {
-            'X-Org-Id': activeOrg
-          }
+          headers: getHeaders()
         });
         if (resList.ok) {
           const dataList = await resList.json();
@@ -443,11 +427,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/send-to-em`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        }
+        headers: getHeaders({ 'Content-Type': 'application/json' })
       });
 
       if (!response.ok) {
@@ -461,10 +441,7 @@ export default function PlanDetail() {
       // Refresh status
       try {
         const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
-          headers: {
-            'X-Org-Id': activeOrg,
-            'X-User-Role': activePersona
-          }
+          headers: getHeaders()
         });
         if (res.ok) {
           const statusData = await res.json();
@@ -483,11 +460,7 @@ export default function PlanDetail() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/share-with-dev`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        }
+        headers: getHeaders({ 'Content-Type': 'application/json' })
       });
 
       if (!response.ok) {
@@ -501,10 +474,7 @@ export default function PlanDetail() {
       // Refresh status
       try {
         const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
-          headers: {
-            'X-Org-Id': activeOrg,
-            'X-User-Role': activePersona
-          }
+          headers: getHeaders()
         });
         if (res.ok) {
           const statusData = await res.json();

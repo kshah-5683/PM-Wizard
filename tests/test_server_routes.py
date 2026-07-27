@@ -309,5 +309,44 @@ class TestServerRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertIn("Only Product Managers", response.json()["detail"])
 
+    @patch("server.SUPABASE_JWT_SECRET", "test-jwt-secret")
+    @patch("server.db_manager")
+    @patch("server.run_graph_background")
+    async def test_jwt_auth_success(self, mock_run, mock_db):
+        import jwt
+        # Generate a valid JWT token
+        token_payload = {
+            "sub": "user-uuid-123",
+            "email": "test-pm@example.com",
+            "user_metadata": {
+                "name": "PM User",
+                "role": "PM",
+                "org_id": "org-google"
+            }
+        }
+        token = jwt.encode(token_payload, "test-jwt-secret", algorithm="HS256")
+        
+        mock_db.get_project_history = AsyncMock(return_value=None)
+        mock_db.save_project_history = AsyncMock()
+
+        response = self.client.post(
+            "/api/v1/plan/start",
+            json={"raw_prd": "Test JWT PRD"},
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("thread_id", response.json())
+
+    @patch("server.SUPABASE_JWT_SECRET", "test-jwt-secret")
+    async def test_jwt_auth_invalid_token(self):
+        # Passing an invalid token should raise 401
+        response = self.client.post(
+            "/api/v1/plan/start",
+            json={"raw_prd": "Test JWT PRD"},
+            headers={"Authorization": "Bearer invalid-jwt-token"}
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Invalid authentication token", response.json()["detail"])
+
 if __name__ == "__main__":
     unittest.main()

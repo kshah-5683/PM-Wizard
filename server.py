@@ -41,15 +41,81 @@ for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
 
 logger = logging.getLogger("pm_middleware_api")
 
+import jwt
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+security = HTTPBearer(auto_error=False)
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET") or os.getenv("JWT_SECRET")
+
+def decode_supabase_jwt(token: str) -> dict:
+    """
+    Decodes and verifies a Supabase JWT token using the server-side secret key.
+    """
+    if not SUPABASE_JWT_SECRET:
+        logger.warning("[Auth] SUPABASE_JWT_SECRET/JWT_SECRET env variable not configured. Token validation will fail.")
+        raise HTTPException(
+            status_code=500,
+            detail="Authentication secret is not configured on the server."
+        )
+    try:
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False}
+        )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Authentication token has expired.")
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid authentication token: {str(e)}")
+
+async def get_current_user_claims(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    x_org_id: Optional[str] = Header(None, alias="X-Org-Id"),
+    user_id: Optional[str] = Header(None, alias="user-id")
+) -> dict:
+    """
+    Resolves role, org_id, and user_id by validating Bearer JWT tokens or falling back to headers.
+    """
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+        payload = decode_supabase_jwt(token)
+        
+        user_metadata = payload.get("user_metadata", {}) or {}
+        app_metadata = payload.get("app_metadata", {}) or {}
+        
+        role = user_metadata.get("role") or app_metadata.get("role") or "PM"
+        org_id = user_metadata.get("org_id") or app_metadata.get("org_id") or "default-org"
+        resolved_user_id = payload.get("sub") or payload.get("email")
+        
+        return {
+            "role": role.upper(),
+            "org_id": org_id,
+            "user_id": resolved_user_id
+        }
+        
+    # Fallback to simulated header authentication for backward-compatible testing
+    role = (x_user_role or "PM").upper()
+    org_id = x_org_id or "default-org"
+    resolved_user_id = user_id
+    
+    return {
+        "role": role,
+        "org_id": org_id,
+        "user_id": resolved_user_id
+    }
+
 # --- Role-Based Access Control (RBAC) Dependency ---
-async def get_current_role(x_user_role: str = Header(default="PM", description="The simulated user role (PM, EM, DEV)")) -> str:
-    role = x_user_role.upper()
+async def get_current_role(claims: dict = Depends(get_current_user_claims)) -> str:
+    role = claims["role"]
     if role not in ("PM", "EM", "DEV"):
-        raise HTTPException(status_code=400, detail="Invalid X-User-Role header value. Must be 'PM', 'EM', or 'DEV'.")
+        raise HTTPException(status_code=400, detail="Invalid role claim value. Must be 'PM', 'EM', or 'DEV'.")
     return role
 
-async def get_current_org(x_org_id: str = Header(default="default-org", description="The tenant organization ID")) -> str:
-    return x_org_id
+async def get_current_org(claims: dict = Depends(get_current_user_claims)) -> str:
+    return claims["org_id"]
 
 def check_visibility(history: dict, role: str) -> bool:
     if not history:
@@ -241,10 +307,11 @@ async def run_graph_resume_background(graph, thread_id: str, resume_cmd: Command
 async def start_plan(
     request: StartPlanRequest, 
     background_tasks: BackgroundTasks, 
-    role: str = Depends(get_current_role), 
-    org_id: str = Depends(get_current_org),
-    user_id: Optional[str] = Header(None, alias="user-id")
+    claims: dict = Depends(get_current_user_claims)
 ):
+    role = claims["role"]
+    org_id = claims["org_id"]
+    user_id = claims["user_id"]
     if role != "PM":
         raise HTTPException(status_code=403, detail="Access denied. Only Product Managers (PM) can initiate new sprint plans.")
         

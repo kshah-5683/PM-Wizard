@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { supabase } from '../supabase';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,63 +33,129 @@ export default function LoginPage() {
     // Simulate network latency for premium feel
     await new Promise((resolve) => setTimeout(resolve, 800));
 
+    const isSupabaseConfigured = process.env.NEXT_PUBLIC_SUPABASE_URL && 
+                                 process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://mock-project.supabase.co';
+
     try {
-      if (isSignUp) {
-        if (!email || !password || !name) {
-          throw new Error("All fields are required for sign up.");
-        }
-        
-        // Save user credentials into simulated database (localStorage)
-        const users = JSON.parse(localStorage.getItem('registeredUsers') || '[]');
-        if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-          throw new Error("User with this email already exists.");
-        }
+      if (isSupabaseConfigured) {
+        console.log("[Auth] Attempting real Supabase authentication...");
+        if (isSignUp) {
+          if (!email || !password || !name) {
+            throw new Error("All fields are required for sign up.");
+          }
+          const { data, error: signUpError } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                name,
+                role,
+                org_id: orgId
+              }
+            }
+          });
+          if (signUpError) throw signUpError;
+          
+          const user = data?.user;
+          if (!user) throw new Error("Sign up completed but no user details returned.");
 
-        const newUser = {
-          email: email.toLowerCase(),
-          password, // simulated hashing
-          name,
-          role,
-          orgId
-        };
-        users.push(newUser);
-        localStorage.setItem('registeredUsers', JSON.stringify(users));
+          const currentUserData = {
+            email: user.email,
+            name: user.user_metadata?.name || name,
+            role: user.user_metadata?.role || role,
+            orgId: user.user_metadata?.org_id || orgId,
+            id: user.id
+          };
 
-        // Auto login
-        localStorage.setItem('currentUser', JSON.stringify(newUser));
-        localStorage.setItem('activePersona', role);
-        localStorage.setItem('activeOrg', orgId);
-        
-        router.push('/');
+          localStorage.setItem('currentUser', JSON.stringify(currentUserData));
+          localStorage.setItem('activePersona', currentUserData.role);
+          localStorage.setItem('activeOrg', currentUserData.orgId);
+          if (data.session?.access_token) {
+            localStorage.setItem('supabaseToken', data.session.access_token);
+          }
+          router.push('/');
+        } else {
+          if (!email || !password) {
+            throw new Error("Please fill out all fields.");
+          }
+          const { data, error: signInError } = await supabase.auth.signInWithPassword({
+            email,
+            password
+          });
+          if (signInError) throw signInError;
+
+          const user = data?.user;
+          if (!user) throw new Error("Sign in succeeded but no user data returned.");
+
+          const currentUserData = {
+            email: user.email,
+            name: user.user_metadata?.name || user.email.split('@')[0],
+            role: user.user_metadata?.role || "PM",
+            orgId: user.user_metadata?.org_id || "default-org",
+            id: user.id
+          };
+
+          localStorage.setItem('currentUser', JSON.stringify(currentUserData));
+          localStorage.setItem('activePersona', currentUserData.role);
+          localStorage.setItem('activeOrg', currentUserData.orgId);
+          if (data.session?.access_token) {
+            localStorage.setItem('supabaseToken', data.session.access_token);
+          }
+          router.push('/');
+        }
       } else {
-        if (!email || !password) {
-          throw new Error("Please fill out all fields.");
+        // Fallback to simulated offline localStorage auth for sandbox testing
+        console.log("[Auth] Supabase URL is mock. Falling back to local simulated authentication...");
+        if (isSignUp) {
+          if (!email || !password || !name) {
+            throw new Error("All fields are required for sign up.");
+          }
+          
+          const users = JSON.parse(localStorage.getItem('registeredUsers') || '[]');
+          if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+            throw new Error("User with this email already exists.");
+          }
+
+          const newUser = {
+            email: email.toLowerCase(),
+            password,
+            name,
+            role,
+            orgId
+          };
+          users.push(newUser);
+          localStorage.setItem('registeredUsers', JSON.stringify(users));
+
+          localStorage.setItem('currentUser', JSON.stringify(newUser));
+          localStorage.setItem('activePersona', role);
+          localStorage.setItem('activeOrg', orgId);
+          router.push('/');
+        } else {
+          if (!email || !password) {
+            throw new Error("Please fill out all fields.");
+          }
+
+          const users = JSON.parse(localStorage.getItem('registeredUsers') || '[]');
+          const defaultUsers = [
+            { email: 'pm@wizard.com', password: 'password', name: 'Product Manager User', role: 'PM', orgId: 'org-google' },
+            { email: 'em@wizard.com', password: 'password', name: 'Engineering Manager User', role: 'EM', orgId: 'org-google' },
+            { email: 'dev@wizard.com', password: 'password', name: 'Developer User', role: 'DEV', orgId: 'org-google' }
+          ];
+
+          const allUsers = [...defaultUsers, ...users];
+          const match = allUsers.find(
+            u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
+          );
+
+          if (!match) {
+            throw new Error("Invalid email or password.");
+          }
+
+          localStorage.setItem('currentUser', JSON.stringify(match));
+          localStorage.setItem('activePersona', match.role);
+          localStorage.setItem('activeOrg', match.orgId);
+          router.push('/');
         }
-
-        // Check against mock database
-        const users = JSON.parse(localStorage.getItem('registeredUsers') || '[]');
-        
-        // Seed default personas for easy testing out-of-the-box
-        const defaultUsers = [
-          { email: 'pm@wizard.com', password: 'password', name: 'Product Manager User', role: 'PM', orgId: 'org-google' },
-          { email: 'em@wizard.com', password: 'password', name: 'Engineering Manager User', role: 'EM', orgId: 'org-google' },
-          { email: 'dev@wizard.com', password: 'password', name: 'Developer User', role: 'DEV', orgId: 'org-google' }
-        ];
-
-        const allUsers = [...defaultUsers, ...users];
-        const match = allUsers.find(
-          u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-        );
-
-        if (!match) {
-          throw new Error("Invalid email or password.");
-        }
-
-        localStorage.setItem('currentUser', JSON.stringify(match));
-        localStorage.setItem('activePersona', match.role);
-        localStorage.setItem('activeOrg', match.orgId);
-        
-        router.push('/');
       }
     } catch (err) {
       setError(err.message);

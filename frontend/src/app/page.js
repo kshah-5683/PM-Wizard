@@ -50,8 +50,28 @@ export default function Dashboard() {
 
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
+    localStorage.removeItem('supabaseToken');
     router.push('/login');
   };
+
+  const getHeaders = (extra = {}) => {
+    const headers = {
+      'X-User-Role': activePersona,
+      'X-Org-Id': activeOrg,
+      ...extra
+    };
+    const userStr = localStorage.getItem('currentUser');
+    if (userStr) {
+      const u = JSON.parse(userStr);
+      headers['user-id'] = u.email;
+    }
+    const token = localStorage.getItem('supabaseToken');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
 
   const handleFetchUrl = async () => {
     if (!sourceDocument.trim()) return;
@@ -69,12 +89,7 @@ export default function Dashboard() {
 
       const response = await fetch(`${API_BASE}/api/v1/parse-url`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg,
-          'user-id': user.email
-        },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           url: sourceDocument.trim()
         })
@@ -113,10 +128,7 @@ export default function Dashboard() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/parse-document`, {
         method: 'POST',
-        headers: {
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: getHeaders(),
         body: formData
       });
 
@@ -160,11 +172,7 @@ export default function Dashboard() {
     setIsFetchingIntegrations(true);
     try {
       const res = await fetch(`${API_BASE}/api/v1/auth/integrations`, {
-        headers: {
-          'user-id': user.email,
-          'X-User-Role': user.role,
-          'X-Org-Id': user.orgId
-        }
+        headers: getHeaders()
       });
       if (res.ok) {
         const data = await res.json();
@@ -224,11 +232,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`${API_BASE}/api/v1/auth/${provider}`, {
         method: 'DELETE',
-        headers: {
-          'user-id': currentUser.email,
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        }
+        headers: getHeaders()
       });
       if (res.ok) {
         setUploadSuccessMsg(`Successfully disconnected ${provider}.`);
@@ -247,10 +251,7 @@ export default function Dashboard() {
     async function fetchProjects() {
       try {
         const res = await fetch(`${API_BASE}/api/v1/projects`, {
-          headers: {
-            'X-Org-Id': activeOrg,
-            'X-User-Role': activePersona
-          }
+          headers: getHeaders()
         });
         if (res.ok) {
           const data = await res.json();
@@ -276,14 +277,7 @@ export default function Dashboard() {
     setError(null);
 
     try {
-      const headers = {
-        'Content-Type': 'application/json',
-        'X-User-Role': activePersona,
-        'X-Org-Id': activeOrg
-      };
-      if (currentUser && currentUser.email) {
-        headers['user-id'] = currentUser.email;
-      }
+      const headers = getHeaders({ 'Content-Type': 'application/json' });
 
       const response = await fetch(`${API_BASE}/api/v1/plan/start`, {
         method: 'POST',
