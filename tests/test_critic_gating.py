@@ -11,7 +11,7 @@ class TestCriticGating(unittest.IsolatedAsyncioTestCase):
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
-                    content='{"critiques": [{"category": "CRITICAL", "description": "No auth check", "remediation": "Add middleware"}, {"category": "WARNING", "description": "Low log verbosity", "remediation": "Add logs"}]}'
+                    content='{"critiques": [{"category": "CRITICAL", "description": "No auth check", "remediation": "Add middleware", "rule_code": "SEC-002"}, {"category": "WARNING", "description": "Low log verbosity", "remediation": "Add logs", "rule_code": null}]}'
                 )
             )
         ]
@@ -22,7 +22,8 @@ class TestCriticGating(unittest.IsolatedAsyncioTestCase):
             "workspace_profile": "Python",
             "sprint_constraints": None,
             "codebase_summary": None,
-            "critiques": None
+            "critiques": None,
+            "enabled_optional_rules": ["TEST-001"]
         }
 
         res = await critic_node(state)
@@ -30,9 +31,17 @@ class TestCriticGating(unittest.IsolatedAsyncioTestCase):
         self.assertIn("critiques", res)
         self.assertEqual(len(res["critiques"]), 2)
         self.assertEqual(res["critiques"][0]["category"], "CRITICAL")
+        self.assertEqual(res["critiques"][0]["rule_code"], "SEC-002")
         self.assertEqual(res["critiques"][1]["category"], "WARNING")
+        self.assertIsNone(res["critiques"][1]["rule_code"])
         self.assertIn("missing_edge_cases", res)
-        self.assertIn("🔴 CRITICAL: No auth check", res["missing_edge_cases"])
+        self.assertIn("🔴 CRITICAL [SEC-002]: No auth check", res["missing_edge_cases"])
+
+        # Check call arguments to verify optional rule instruction is injected
+        call_args = mock_acomp.call_args[1]
+        system_content = call_args["messages"][0]["content"]
+        self.assertIn("TEST-001", system_content)
+        self.assertIn("SEC-001", system_content)
 
     def test_route_after_critic_critical(self):
         # Gaps exist with category CRITICAL

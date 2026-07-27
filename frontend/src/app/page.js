@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [githubRepo, setGithubRepo] = useState('');
   const [jiraProjectKey, setJiraProjectKey] = useState('');
   const [sprintConstraints, setSprintConstraints] = useState('');
+  const [enabledOptionalRules, setEnabledOptionalRules] = useState([]);
 
   const [integrations, setIntegrations] = useState([
     { provider: 'github', connected: false },
@@ -288,7 +289,8 @@ export default function Dashboard() {
           project_mode: projectMode,
           github_repo: githubRepo || null,
           jira_project_key: jiraProjectKey || null,
-          sprint_constraints: sprintConstraints || null
+          sprint_constraints: sprintConstraints || null,
+          enabled_optional_rules: enabledOptionalRules
         }),
       });
 
@@ -524,6 +526,54 @@ export default function Dashboard() {
                   value={sprintConstraints}
                   onChange={(e) => setSprintConstraints(e.target.value)}
                 />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label">Optional Critic Compliance Checks</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem' }}>
+                  {[
+                    { code: 'TEST-001', title: 'Require Unit Test Specs', desc: 'Verify if the PRD outlines automated testing specifications.' },
+                    { code: 'DOC-001', title: 'Require API Documentation Specs', desc: 'Ensure endpoints specify raw request/response schema details.' },
+                    { code: 'PERF-001', title: 'Require Caching Strategy', desc: 'Verify caching rules are specified for compute-heavy features.' }
+                  ].map((rule) => {
+                    const isChecked = enabledOptionalRules.includes(rule.code);
+                    return (
+                      <label 
+                        key={rule.code} 
+                        style={{ 
+                          display: 'flex', 
+                          alignItems: 'flex-start', 
+                          gap: '0.75rem', 
+                          cursor: 'pointer',
+                          padding: '0.6rem',
+                          borderRadius: '8px',
+                          background: isChecked ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                          border: '1px solid ' + (isChecked ? 'rgba(255, 255, 255, 0.08)' : 'transparent'),
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <input 
+                          type="checkbox" 
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setEnabledOptionalRules([...enabledOptionalRules, rule.code]);
+                            } else {
+                              setEnabledOptionalRules(enabledOptionalRules.filter(c => c !== rule.code));
+                            }
+                          }}
+                          style={{ marginTop: '4px', cursor: 'pointer' }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: isChecked ? '#fff' : 'var(--text-secondary)' }}>
+                            {rule.title} <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>({rule.code})</span>
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{rule.desc}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="form-group">

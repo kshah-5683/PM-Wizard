@@ -138,6 +138,24 @@ async def estimator_node(state: AgentState):
     validated = SprintPlan(**parsed)
     tickets = [t.model_dump() for t in validated.tickets]
     
+    # Programmatic Guardrails & Auto-Sanitization
+    FIBONACCI_NUMBERS = [1, 2, 3, 5, 8, 13]
+    for t in tickets:
+        # 1. Fibonacci validation & auto-correction
+        est = t.get("estimation", 2)
+        if est not in FIBONACCI_NUMBERS:
+            nearest = min(FIBONACCI_NUMBERS, key=lambda x: abs(x - est))
+            print(f"[Estimator Guardrail] Correcting non-Fibonacci estimation {est} to {nearest} for ticket {t['key']}.")
+            t["estimation"] = nearest
+            
+        # 2. Greenfield warning banner auto-enforcement
+        if project_mode == "GREENFIELD":
+            warning_banner = "*⚠️ NOTE: Greenfield estimation variance is higher due to zero-to-one implementation risk.*"
+            desc = t.get("description", "")
+            if warning_banner not in desc:
+                print(f"[Estimator Guardrail] Injecting missing Greenfield variance warning for ticket {t['key']}.")
+                t["description"] = f"{warning_banner}\n\n{desc}"
+                
     return {
         "jira_tickets": tickets,
         "em_approval_status": "PENDING",

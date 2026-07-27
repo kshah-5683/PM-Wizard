@@ -1,0 +1,54 @@
+{
+  "base_rules": [
+    {
+      "code": "SEC-001",
+      "category": "SECURITY",
+      "title": "OAuth Token Leakage Risk",
+      "description": "PRDs specifying third-party integrations must utilize secure OAuth handshakes and cryptographically store tokens; raw keys or secrets must never be passed in query params or plaintext headers."
+    },
+    {
+      "code": "SEC-002",
+      "category": "SECURITY",
+      "title": "Unauthenticated REST Endpoints",
+      "description": "Any endpoint mutating database state, retrieving user profiles, or accessing corporate data must require active authentication (JWT session tokens) and enforce strict RBAC checks."
+    },
+    {
+      "code": "DB-001",
+      "category": "DATABASE",
+      "title": "Missing Schema Constraints",
+      "description": "PRDs initiating new entities or tables must clearly outline primary/foreign keys, uniqueness constraints, nullability, and database types to prevent data corruption."
+    },
+    {
+      "code": "API-001",
+      "category": "API_DESIGN",
+      "title": "Missing Pagination on Lists",
+      "description": "API endpoints returning collections or search results must implement cursor or offset-based pagination to prevent memory exhaustion on large datasets."
+    },
+    {
+      "code": "API-002",
+      "category": "API_DESIGN",
+      "title": "Missing Input Parameter Validation",
+      "description": "Request payloads mutating database states must define strict parameter constraints, types (e.g. UUID, email format), and length validations to prevent SQL Injection or XSS."
+    }
+  ],
+  "optional_rules": [
+    {
+      "code": "TEST-001",
+      "category": "TESTING",
+      "title": "Unit Test Specifications Required",
+      "description": "The specification must detail automated testing requirements, coverage targets, or explicit unit test structures for new endpoints or features."
+    },
+    {
+      "code": "DOC-001",
+      "category": "DOCUMENTATION",
+      "title": "API Documentation Specifications Required",
+      "description": "Any new service or endpoint must detail raw request/response payloads, return schemas, error statuses, and markdown documentation templates."
+    },
+    {
+      "code": "PERF-001",
+      "category": "PERFORMANCE",
+      "title": "Caching Strategy Required",
+      "description": "PRDs introducing heavy DB queries, complex tree walks, or external requests must specify cache behaviors (e.g. Redis, browser caching) to protect server load."
+    }
+  ]
+}

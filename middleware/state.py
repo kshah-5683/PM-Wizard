@@ -15,6 +15,7 @@ class AgentState(TypedDict):
     workspace_profile: Optional[str]  # NEW: Auto-inferred tech stack & repo profiling
     sprint_constraints: Optional[str]  # NEW: Dynamic EM constraints passed JIT
     custom_tags: Optional[List[str]]  # NEW: Custom tagging context
+    enabled_optional_rules: Optional[List[str]]  # NEW: List of optional compliance rules enabled for this run
     critiques: Optional[List[Dict[str, Any]]]  # NEW: Structured critique items from critic node
     critic_resolved: bool  # NEW: Flag indicating if critical issues have been bypassed or resolved
     org_id: Optional[str]  # NEW: Multi-tenant organization identifier

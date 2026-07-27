@@ -1078,6 +1078,20 @@ export default function PlanDetail() {
                     }}>
                       {critique.category}
                     </span>
+                    {critique.rule_code && (
+                      <span style={{
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        color: 'rgba(255, 255, 255, 0.65)',
+                        border: '1px solid var(--glass-border)',
+                        fontFamily: 'monospace'
+                      }}>
+                        Rule: {critique.rule_code}
+                      </span>
+                    )}
                   </div>
                   <h4 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.5rem', color: '#fff', lineHeight: '1.4' }}>{critique.description}</h4>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>

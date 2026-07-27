@@ -136,6 +136,7 @@ class StartPlanRequest(BaseModel):
     github_repo: Optional[str] = Field(None, description="Optional remote GitHub repository name in format 'owner/repo'.")
     jira_project_key: Optional[str] = Field(None, description="Optional target Jira project key (e.g., 'PROJ').")
     project_mode: Optional[Literal["BROWNFIELD", "GREENFIELD"]] = Field(None, description="Optional project lifecycle mode (BROWNFIELD or GREENFIELD).")
+    enabled_optional_rules: Optional[List[str]] = Field(None, description="Optional list of critic compliance check codes enabled for this plan.")
 
 
 class ParseUrlRequest(BaseModel):
@@ -359,7 +360,8 @@ async def start_plan(
         "user_id": user_id,
         "github_repo": request.github_repo,
         "jira_project_key": request.jira_project_key,
-        "project_mode": request.project_mode
+        "project_mode": request.project_mode,
+        "enabled_optional_rules": request.enabled_optional_rules
     }
     
     title = f"Plan for {raw_prd.splitlines()[0][:50]}" if raw_prd else "New Sprint Plan"
