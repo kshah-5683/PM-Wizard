@@ -49,6 +49,15 @@ async def get_current_role(x_user_role: str = Header(default="PM", description="
 async def get_current_org(x_org_id: str = Header(default="default-org", description="The tenant organization ID")) -> str:
     return x_org_id
 
+def check_visibility(history: dict, role: str) -> bool:
+    if not history:
+        return False
+    if role == 'DEV':
+        return history.get("shared_with_dev") is True
+    elif role == 'EM':
+        return history.get("sent_to_em") is True
+    return True # PM always has access
+
 # --- Request/Response Models ---
 class StartPlanRequest(BaseModel):
     raw_prd: str = Field(..., description="The product requirements document markdown text.")
@@ -349,7 +358,9 @@ async def get_plan_status(thread_id: str, org_id: str = Depends(get_current_org)
         "em_feedback_comments": values.get("em_feedback_comments"),
         "attempt_count": values.get("attempt_count", 0),
         "paused_waiting_input": bool(snapshot.next) if snapshot else False,
-        "interrupt_payload": interrupt_payload
+        "interrupt_payload": interrupt_payload,
+        "sent_to_em": history.get("sent_to_em") if history else False,
+        "shared_with_dev": history.get("shared_with_dev") if history else False
     }
 
 @app.post("/api/v1/plan/{thread_id}/resume")
@@ -357,6 +368,16 @@ async def resume_plan(thread_id: str, request: ResumePlanRequest, background_tas
     config = {"configurable": {"thread_id": thread_id}}
     graph = app.state.graph_db
     
+    # Verify organization ownership and role visibility
+    try:
+        history = await db_manager.get_project_history(thread_id, org_id=org_id)
+        if history and not check_visibility(history, role):
+            raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     snapshot = await graph.aget_state(config)
     if not snapshot or not snapshot.next:
         raise HTTPException(status_code=400, detail="Planning session is not currently paused and cannot be resumed.")
@@ -445,11 +466,15 @@ async def create_change_request(thread_id: str, request: ChangeRequestPayload, r
     if role != "DEV":
         raise HTTPException(status_code=403, detail="Access denied. Only Developers (DEV) can submit change requests.")
         
-    # Verify organization ownership of thread
+    # Verify organization ownership and role visibility of thread
     try:
         history = await db_manager.get_project_history(thread_id, org_id=org_id)
         if not history:
             raise HTTPException(status_code=404, detail="Session not found in this organization.")
+        if not check_visibility(history, role):
+            raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -469,12 +494,16 @@ async def create_change_request(thread_id: str, request: ChangeRequestPayload, r
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/plan/{thread_id}/change-requests")
-async def get_change_requests(thread_id: str, org_id: str = Depends(get_current_org)):
-    # Verify organization ownership of thread
+async def get_change_requests(thread_id: str, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+    # Verify organization ownership and role visibility of thread
     try:
         history = await db_manager.get_project_history(thread_id, org_id=org_id)
         if not history:
             raise HTTPException(status_code=404, detail="Session not found in this organization.")
+        if not check_visibility(history, role):
+            raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -490,11 +519,15 @@ async def resolve_change_request(thread_id: str, request_id: int, request: Resol
     if role != "EM":
         raise HTTPException(status_code=403, detail="Access denied. Only Engineering Managers (EM) can resolve change requests.")
         
-    # Verify organization ownership of thread
+    # Verify organization ownership and role visibility of thread
     try:
         history = await db_manager.get_project_history(thread_id, org_id=org_id)
         if not history:
             raise HTTPException(status_code=404, detail="Session not found in this organization.")
+        if not check_visibility(history, role):
+            raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -515,10 +548,12 @@ async def propose_ai_changes(
     if role != "DEV":
         raise HTTPException(status_code=403, detail="Access denied. Only Developers (DEV) can propose changes via AI.")
         
-    # Verify organization ownership of thread
+    # Verify organization ownership and role visibility of thread
     history = await db_manager.get_project_history(thread_id, org_id=org_id)
     if not history:
         raise HTTPException(status_code=404, detail="Session not found in this organization.")
+    if not check_visibility(history, role):
+        raise HTTPException(status_code=403, detail="Access denied. You do not have visibility permissions for this session.")
 
     # Retrieve current graph state / backlog tickets
     graph = app.state.graph_db
@@ -611,10 +646,36 @@ async def propose_ai_changes(
         "count": created_count
     }
 
+@app.post("/api/v1/plan/{thread_id}/send-to-em")
+async def send_to_em(thread_id: str, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+    if role != "PM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Product Managers (PM) can send plans to EM.")
+    
+    history = await db_manager.get_project_history(thread_id, org_id=org_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="Session not found in this organization.")
+        
+    await db_manager.update_project_visibility(thread_id, sent_to_em=True)
+    return {"status": "SUCCESS", "message": "Planning session sent to EM for review."}
+
+@app.post("/api/v1/plan/{thread_id}/share-with-dev")
+async def share_with_dev(thread_id: str, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+    if role != "EM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Engineering Managers (EM) can share plans with developers.")
+    
+    history = await db_manager.get_project_history(thread_id, org_id=org_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="Session not found in this organization.")
+    if not history.get("sent_to_em"):
+        raise HTTPException(status_code=400, detail="Cannot share with developers: this session has not been sent to the EM for review yet.")
+        
+    await db_manager.update_project_visibility(thread_id, shared_with_dev=True)
+    return {"status": "SUCCESS", "message": "Planning session shared with developers."}
+
 @app.get("/api/v1/projects")
-async def list_projects(org_id: str = Depends(get_current_org)):
+async def list_projects(role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
     try:
-        projects = await db_manager.list_project_history(limit=50, org_id=org_id)
+        projects = await db_manager.list_project_history(limit=50, org_id=org_id, role=role)
         return {"projects": projects}
     except Exception as e:
         logger.error(f"[DB] Failed to list projects: {e}")

@@ -45,7 +45,8 @@ export default function Dashboard() {
       try {
         const res = await fetch(`${API_BASE}/api/v1/projects`, {
           headers: {
-            'X-Org-Id': activeOrg
+            'X-Org-Id': activeOrg,
+            'X-User-Role': activePersona
           }
         });
         if (res.ok) {
@@ -59,7 +60,7 @@ export default function Dashboard() {
     fetchProjects();
     const interval = setInterval(fetchProjects, 10000); // refresh every 10s
     return () => clearInterval(interval);
-  }, [activeOrg]);
+  }, [activeOrg, activePersona]);
 
   const handleStartPlanning = async (e) => {
     e.preventDefault();

@@ -385,6 +385,9 @@ export default function PlanDetail() {
       }, 500);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDevAiProposeChanges = async () => {
@@ -426,6 +429,86 @@ export default function PlanDetail() {
         if (resList.ok) {
           const dataList = await resList.json();
           setChangeRequests(dataList.change_requests || []);
+        }
+      } catch (e) {}
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSendToEm = async () => {
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/send-to-em`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to send to EM.");
+      }
+
+      const data = await response.json();
+      alert(data.message || "Successfully sent plan to EM for review!");
+      
+      // Refresh status
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
+          headers: {
+            'X-Org-Id': activeOrg,
+            'X-User-Role': activePersona
+          }
+        });
+        if (res.ok) {
+          const statusData = await res.json();
+          setPlanData(statusData);
+        }
+      } catch (e) {}
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleShareWithDev = async () => {
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/share-with-dev`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to share with Dev.");
+      }
+
+      const data = await response.json();
+      alert(data.message || "Successfully shared plan with developers!");
+      
+      // Refresh status
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/plan/${thread_id}/status`, {
+          headers: {
+            'X-Org-Id': activeOrg,
+            'X-User-Role': activePersona
+          }
+        });
+        if (res.ok) {
+          const statusData = await res.json();
+          setPlanData(statusData);
         }
       } catch (e) {}
     } catch (err) {
@@ -505,6 +588,40 @@ export default function PlanDetail() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '6px' }}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Dashboard
           </button>
+          {activePersona === 'PM' && (
+            planData.sent_to_em ? (
+              <span style={{ color: '#34d399', fontSize: '0.85rem', fontWeight: 600, padding: '0 0.5rem', display: 'flex', alignItems: 'center' }}>✓ Sent to EM</span>
+            ) : (
+              <button 
+                className="btn btn-primary"
+                disabled={isSubmitting}
+                onClick={handleSendToEm}
+                style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', borderColor: '#3b82f6' }}
+              >
+                {isSubmitting ? 'Sending...' : 'Send to EM for Review'}
+              </button>
+            )
+          )}
+
+          {activePersona === 'EM' && planData.sent_to_em && (
+            planData.shared_with_dev ? (
+              <span style={{ color: '#34d399', fontSize: '0.85rem', fontWeight: 600, padding: '0 0.5rem', display: 'flex', alignItems: 'center' }}>✓ Shared with Devs</span>
+            ) : (
+              <button 
+                className="btn btn-primary"
+                disabled={isSubmitting}
+                onClick={handleShareWithDev}
+                style={{ background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)', borderColor: '#10b981' }}
+              >
+                {isSubmitting ? 'Sharing...' : 'Share with Developers'}
+              </button>
+            )
+          )}
+
+          {activePersona === 'DEV' && planData.shared_with_dev && (
+            <span style={{ color: '#34d399', fontSize: '0.85rem', fontWeight: 600, padding: '0 0.5rem', display: 'flex', alignItems: 'center' }}>✓ Shared with Devs</span>
+          )}
+
           {isAwaitingApproval && activePersona === 'EM' && (
             <button 
               className="btn btn-primary"

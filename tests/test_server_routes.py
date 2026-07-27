@@ -117,7 +117,8 @@ class TestServerRoutes(unittest.IsolatedAsyncioTestCase):
         # 1. Setup mock DB project check
         mock_db.get_project_history = AsyncMock(return_value={
             "thread_id": "test-uuid-123",
-            "org_id": "org-google"
+            "org_id": "org-google",
+            "shared_with_dev": True
         })
         mock_db.create_change_request = AsyncMock(return_value=42)
 
@@ -158,6 +159,58 @@ class TestServerRoutes(unittest.IsolatedAsyncioTestCase):
             requested_points=5,
             requested_description="Postgres database setup"
         )
+
+    @patch("server.db_manager")
+    async def test_send_to_em_success(self, mock_db):
+        mock_db.get_project_history = AsyncMock(return_value={
+            "thread_id": "test-uuid-123",
+            "org_id": "org-google"
+        })
+        mock_db.update_project_visibility = AsyncMock(return_value=True)
+
+        response = self.client.post(
+            "/api/v1/plan/test-uuid-123/send-to-em",
+            headers={"X-User-Role": "PM", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_db.update_project_visibility.assert_called_once_with("test-uuid-123", sent_to_em=True)
+
+    @patch("server.db_manager")
+    async def test_send_to_em_forbidden_for_dev(self, mock_db):
+        response = self.client.post(
+            "/api/v1/plan/test-uuid-123/send-to-em",
+            headers={"X-User-Role": "DEV", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 403)
+
+    @patch("server.db_manager")
+    async def test_share_with_dev_success(self, mock_db):
+        mock_db.get_project_history = AsyncMock(return_value={
+            "thread_id": "test-uuid-123",
+            "org_id": "org-google",
+            "sent_to_em": True
+        })
+        mock_db.update_project_visibility = AsyncMock(return_value=True)
+
+        response = self.client.post(
+            "/api/v1/plan/test-uuid-123/share-with-dev",
+            headers={"X-User-Role": "EM", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_db.update_project_visibility.assert_called_once_with("test-uuid-123", shared_with_dev=True)
+
+    @patch("server.db_manager")
+    async def test_dev_access_blocked_when_not_shared(self, mock_db):
+        mock_db.get_project_history = AsyncMock(return_value={
+            "thread_id": "test-uuid-123",
+            "org_id": "org-google",
+            "shared_with_dev": False
+        })
+        response = self.client.get(
+            "/api/v1/plan/test-uuid-123/status",
+            headers={"X-User-Role": "DEV", "X-Org-Id": "org-google"}
+        )
+        self.assertEqual(response.status_code, 403)
 
 if __name__ == "__main__":
     unittest.main()

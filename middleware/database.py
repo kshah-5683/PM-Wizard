@@ -58,6 +58,8 @@ class DatabaseManager:
                             total_stories INTEGER DEFAULT 0,
                             total_story_points INTEGER DEFAULT 0,
                             ai_summary TEXT,
+                            sent_to_em BOOLEAN DEFAULT FALSE,
+                            shared_with_dev BOOLEAN DEFAULT FALSE,
                             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         );
@@ -136,8 +138,10 @@ class DatabaseManager:
                         await cur.execute("ALTER TABLE project_history ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT 'default-org';")
                         await cur.execute("ALTER TABLE historical_tickets ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT 'default-org';")
                         await cur.execute("ALTER TABLE user_integrations ADD COLUMN IF NOT EXISTS org_id TEXT DEFAULT 'default-org';")
+                        await cur.execute("ALTER TABLE project_history ADD COLUMN IF NOT EXISTS sent_to_em BOOLEAN DEFAULT FALSE;")
+                        await cur.execute("ALTER TABLE project_history ADD COLUMN IF NOT EXISTS shared_with_dev BOOLEAN DEFAULT FALSE;")
                     except Exception as alt_err:
-                        print(f"[Database] Failed to dynamically alter tables for multi-tenancy: {alt_err}")
+                        print(f"[Database] Failed to dynamically alter tables for multi-tenancy & visibility: {alt_err}")
                     
                     # Safe conditional Row-Level Security (RLS) policies for Supabase environments
                     try:
@@ -265,14 +269,57 @@ class DatabaseManager:
                 await cur.execute(query, params)
                 return await cur.fetchone()
 
-    async def list_project_history(self, limit: int = 50, org_id: str = 'default-org'):
-        query = """
-            SELECT * FROM project_history WHERE org_id = %s ORDER BY updated_at DESC LIMIT %s;
-        """
+    async def list_project_history(self, limit: int = 50, org_id: str = 'default-org', role: str = None):
+        if role == 'DEV':
+            query = """
+                SELECT * FROM project_history 
+                WHERE org_id = %s AND shared_with_dev = TRUE 
+                ORDER BY updated_at DESC LIMIT %s;
+            """
+        elif role == 'EM':
+            query = """
+                SELECT * FROM project_history 
+                WHERE org_id = %s AND sent_to_em = TRUE 
+                ORDER BY updated_at DESC LIMIT %s;
+            """
+        else:
+            query = """
+                SELECT * FROM project_history 
+                WHERE org_id = %s 
+                ORDER BY updated_at DESC LIMIT %s;
+            """
         async with self.get_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(query, (org_id, limit))
                 return await cur.fetchall()
+
+    async def update_project_visibility(self, thread_id: str, sent_to_em: Optional[bool] = None, shared_with_dev: Optional[bool] = None) -> bool:
+        if not self.pool:
+            return False
+        
+        updates = []
+        params = []
+        if sent_to_em is not None:
+            updates.append("sent_to_em = %s")
+            params.append(sent_to_em)
+        if shared_with_dev is not None:
+            updates.append("shared_with_dev = %s")
+            params.append(shared_with_dev)
+            
+        if not updates:
+            return False
+            
+        query = f"""
+            UPDATE project_history 
+            SET {", ".join(updates)}, updated_at = CURRENT_TIMESTAMP
+            WHERE thread_id = %s;
+        """
+        params.append(thread_id)
+        
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, tuple(params))
+                return True
 
     async def create_change_request(
         self, thread_id: str, ticket_key: str, developer_name: str,
