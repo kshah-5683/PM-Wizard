@@ -6,7 +6,7 @@ from middleware.database import db_manager
 from middleware.rag import search_similar_tickets
 from middleware.llm import aresilient_completion
 
-def make_user_prompt(prd, gaps_val, codebase_val, tickets_val, feedback_val, profile_val=None, constraints_val=None, tags_val=None):
+def make_user_prompt(prd, gaps_val, codebase_val, tickets_val, feedback_val, profile_val=None, constraints_val=None, tags_val=None, velocity_val=None):
     parts = [
         f"<prd>\n{prd}\n</prd>",
         f"<gaps_identified>\n{gaps_val}\n</gaps_identified>"
@@ -17,6 +17,8 @@ def make_user_prompt(prd, gaps_val, codebase_val, tickets_val, feedback_val, pro
         parts.append(f"<sprint_constraints>\n{constraints_val}\n</sprint_constraints>")
     if tags_val:
         parts.append(f"<custom_tags>\n{', '.join(tags_val)}\n</custom_tags>")
+    if velocity_val:
+        parts.append(f"<velocity_calibration>\n{velocity_val}\n</velocity_calibration>")
     if codebase_val:
         parts.append(f"<codebase_context>\n{codebase_val}\n</codebase_context>")
     if tickets_val:

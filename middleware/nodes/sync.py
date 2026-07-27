@@ -189,13 +189,14 @@ async def publish_tickets_to_jira(tickets: list, cloud_id: str, access_token: st
                     try:
                         from middleware.tech_spec_generator import generate_ticket_tech_spec
                         spec = await generate_ticket_tech_spec(ticket)
-                        comment_url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/issue/{created_key}/comment"
-                        comment_body = {
-                            "body": string_to_adf(spec.get("markdown_summary", ""))
-                        }
-                        comment_res = await client.post(comment_url, headers=headers, json=comment_body)
-                        if comment_res.is_success:
-                            print(f"[Jira] Tech Spec comment posted successfully on {created_key}")
+                        if spec and spec.get("markdown_summary"):
+                            comment_url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/issue/{created_key}/comment"
+                            comment_body = {
+                                "body": string_to_adf(spec.get("markdown_summary", ""))
+                            }
+                            comment_res = await client.post(comment_url, headers=headers, json=comment_body)
+                            if comment_res.is_success:
+                                print(f"[Jira] Tech Spec comment posted successfully on {created_key}")
                     except Exception as spec_err:
                         print(f"[Jira] Non-fatal: Failed to post tech spec comment on {created_key}: {spec_err}")
                 else:

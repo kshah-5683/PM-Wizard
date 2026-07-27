@@ -48,10 +48,12 @@ class TestJiraPublishing(unittest.IsolatedAsyncioTestCase):
             project_key = await fetch_default_jira_project("cloud-id-123", "fake-token", client)
             self.assertEqual(project_key, "ALPHA")
 
+    @patch("middleware.tech_spec_generator.generate_ticket_tech_spec")
     @patch("httpx.AsyncClient.post")
     @patch("middleware.nodes.sync.discover_story_points_field")
-    async def test_publish_tickets_to_jira(self, mock_discover, mock_post):
+    async def test_publish_tickets_to_jira(self, mock_discover, mock_post, mock_tech_spec):
         mock_discover.return_value = "customfield_10016"
+        mock_tech_spec.return_value = None
         
         # We will mock the issue posts for Epic, Story, Subtask
         res_epic = MagicMock()

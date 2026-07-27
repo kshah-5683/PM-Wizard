@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Dict, Any
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
@@ -607,6 +607,33 @@ async def generate_ticket_tech_spec_endpoint(
     except Exception as e:
         logger.error(f"[TechSpec] Endpoint failed for ticket {ticket_key}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate tech spec: {str(e)}")
+
+class SprintRetrospectivePayload(BaseModel):
+    sprint_plan_id: Optional[str] = None
+    closed_tickets: List[Dict[str, Any]]
+
+@app.post("/api/v1/sprints/retrospective")
+async def process_sprint_retrospective(
+    payload: SprintRetrospectivePayload,
+    role: str = Depends(get_current_role),
+    org_id: str = Depends(get_current_org)
+):
+    """
+    Processes closed sprint issues, calculates velocity multiplier, and formats RAG prompt calibration.
+    """
+    if role not in ("EM", "PM"):
+        raise HTTPException(status_code=403, detail="Access denied. Only EMs and PMs can submit sprint retrospectives.")
+        
+    from middleware.velocity_calibrator import calculate_sprint_velocity_multiplier, format_velocity_calibration_context
+    velocity_res = calculate_sprint_velocity_multiplier(payload.closed_tickets)
+    calibration_text = format_velocity_calibration_context(velocity_res)
+    
+    return {
+        "status": "SUCCESS",
+        "velocity_metrics": velocity_res,
+        "calibration_context": calibration_text
+    }
+
 
 
 @app.post("/api/v1/plan/{thread_id}/change-request")
