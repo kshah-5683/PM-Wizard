@@ -129,9 +129,39 @@ async def ingestion_node(state: AgentState):
         print(f"[Ingestion] Failed to extract technology keywords: {e}. Falling back to static list.")
         keywords = None
     
-    # 3. Parallel codebase scan and repository profiling
+    # 3. Retrieve GitHub credentials & repo if available
+    user_id = state.get("user_id")
+    org_id = state.get("org_id", "default-org")
+    github_repo = state.get("github_repo")
+    github_token = None
+    
+    if user_id:
+        try:
+            from middleware.oauth import get_valid_token
+            github_token = await get_valid_token(user_id, "github", org_id)
+            
+            # Fallback auto-detection if GitHub is connected but no specific repo is selected
+            if github_token and not github_repo:
+                import httpx
+                headers = {
+                    "Authorization": f"token {github_token}",
+                    "Accept": "application/json",
+                    "User-Agent": "PM-Wizard-App"
+                }
+                async with httpx.AsyncClient() as client:
+                    res = await client.get("https://api.github.com/user/repos?sort=updated&per_page=1", headers=headers)
+                    if res.is_success:
+                        repos = res.json()
+                        if repos:
+                            github_repo = repos[0].get("full_name")
+                            print(f"[Ingestion] Auto-detected default GitHub repository: {github_repo}")
+        except Exception as e:
+            print(f"[Ingestion] Failed to resolve GitHub repository details: {e}")
+
+    # 4. Parallel codebase scan and repository profiling
     try:
-        codebase_task = asyncio.to_thread(inspect_codebase, raw_prd, None, keywords)
+        # inspect_codebase is async, profile_repository is sync (CPU-bound local scan fallback)
+        codebase_task = inspect_codebase(raw_prd, None, keywords, github_repo, github_token)
         profile_task = asyncio.to_thread(profile_repository)
         
         codebase_summary, workspace_profile = await asyncio.gather(codebase_task, profile_task)
@@ -145,5 +175,6 @@ async def ingestion_node(state: AgentState):
         "attempt_count": state.get("attempt_count", 0),
         "codebase_summary": codebase_summary,
         "workspace_profile": workspace_profile,
-        "prd_images_context": prd_images_context
+        "prd_images_context": prd_images_context,
+        "github_repo": github_repo
     }

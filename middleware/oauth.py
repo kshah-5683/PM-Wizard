@@ -213,3 +213,86 @@ async def process_oauth_callback(provider: str, code: str, state: str) -> Dict:
         "provider": provider,
         "tenant_id": tenant_id
     }
+
+async def refresh_atlassian_token(user_id: str, org_id: str) -> Optional[str]:
+    """
+    Refreshes the Atlassian OAuth token using the stored refresh token.
+    Saves the new tokens to the database.
+    """
+    integration = await db_manager.get_integration(user_id, "atlassian", org_id)
+    if not integration:
+        return None
+        
+    refresh_token = integration.get("refresh_token")
+    if not refresh_token:
+        return integration.get("access_token")
+        
+    if not ATLASSIAN_CLIENT_ID or not ATLASSIAN_CLIENT_SECRET:
+        print("[OAuth] Atlassian client credentials are not configured. Cannot refresh.")
+        return integration.get("access_token")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(
+                "https://auth.atlassian.com/oauth/token",
+                json={
+                    "grant_type": "refresh_token",
+                    "client_id": ATLASSIAN_CLIENT_ID,
+                    "client_secret": ATLASSIAN_CLIENT_SECRET,
+                    "refresh_token": refresh_token
+                },
+                headers={"Content-Type": "application/json"}
+            )
+            if not res.is_success:
+                print(f"[OAuth] Failed to refresh Atlassian token: {res.text}")
+                return None
+                
+            data = res.json()
+            new_access = data.get("access_token")
+            new_refresh = data.get("refresh_token") or refresh_token
+            expires_in = data.get("expires_in")
+            
+            expires_at_timestamp = None
+            if expires_in:
+                expires_at_timestamp = time.time() + float(expires_in)
+                
+            await db_manager.save_integration(
+                user_id=user_id,
+                provider="atlassian",
+                access_token=new_access,
+                refresh_token=new_refresh,
+                expires_at_timestamp=expires_at_timestamp,
+                scopes=integration.get("scopes"),
+                tenant_id=integration.get("tenant_id"),
+                org_id=org_id
+            )
+            return new_access
+        except Exception as e:
+            print(f"[OAuth] Exception refreshing Atlassian token: {e}")
+            return None
+
+async def get_valid_token(user_id: str, provider: str, org_id: str = 'default-org') -> Optional[str]:
+    """
+    Retrieves the access token for the provider, refreshing it if expired (currently supported for Atlassian).
+    """
+    integration = await db_manager.get_integration(user_id, provider, org_id)
+    if not integration:
+        return None
+        
+    token_expires_at = integration.get("token_expires_at")
+    is_expired = False
+    if token_expires_at:
+        import datetime
+        # Convert naive datetime to aware UTC if necessary
+        if token_expires_at.tzinfo is None:
+            token_expires_at = token_expires_at.replace(tzinfo=datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if token_expires_at <= now + datetime.timedelta(seconds=60):
+            is_expired = True
+            
+    if is_expired and provider == "atlassian":
+        print(f"[OAuth] Atlassian token is expired or expiring soon. Refreshing...")
+        return await refresh_atlassian_token(user_id, org_id)
+        
+    return integration.get("access_token")
+

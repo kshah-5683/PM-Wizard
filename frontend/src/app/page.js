@@ -219,8 +219,8 @@ export default function Dashboard() {
 
   const handleStartPlanning = async (e) => {
     e.preventDefault();
-    if (!rawPrd.trim()) {
-      setError("Please enter your Product Requirement Document (PRD) content.");
+    if (!rawPrd.trim() && !sourceDocument.trim()) {
+      setError("Please enter your Product Requirement Document (PRD) content or provide a valid source document URL.");
       return;
     }
 
@@ -228,15 +228,20 @@ export default function Dashboard() {
     setError(null);
 
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-User-Role': activePersona,
+        'X-Org-Id': activeOrg
+      };
+      if (currentUser && currentUser.email) {
+        headers['user-id'] = currentUser.email;
+      }
+
       const response = await fetch(`${API_BASE}/api/v1/plan/start`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': activePersona,
-          'X-Org-Id': activeOrg
-        },
+        headers: headers,
         body: JSON.stringify({
-          raw_prd: rawPrd,
+          raw_prd: rawPrd || null,
           source_document: sourceDocument || null,
         }),
       });

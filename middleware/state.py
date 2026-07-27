@@ -18,6 +18,9 @@ class AgentState(TypedDict):
     critiques: Optional[List[Dict[str, Any]]]  # NEW: Structured critique items from critic node
     critic_resolved: bool  # NEW: Flag indicating if critical issues have been bypassed or resolved
     org_id: Optional[str]  # NEW: Multi-tenant organization identifier
+    user_id: Optional[str]  # NEW: User UUID for resolving OAuth connections
+    github_repo: Optional[str]  # NEW: Target remote repository (owner/repo)
+    jira_project_key: Optional[str]  # NEW: Target Jira project key (e.g. 'PROJ')
 
 # Pydantic models for structured output generation
 class JiraTicket(BaseModel):

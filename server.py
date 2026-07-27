@@ -62,11 +62,13 @@ def check_visibility(history: dict, role: str) -> bool:
 
 # --- Request/Response Models ---
 class StartPlanRequest(BaseModel):
-    raw_prd: str = Field(..., description="The product requirements document markdown text.")
+    raw_prd: Optional[str] = Field(None, description="The product requirements document markdown text.")
     source_document: Optional[str] = Field(None, description="Optional upstream source URL (e.g. Notion, Confluence).")
     thread_id: Optional[str] = Field(None, description="Optional thread identifier. Generates a new UUID if not provided.")
     sprint_constraints: Optional[str] = Field(None, description="Optional dynamic engineering or business constraints.")
     custom_tags: Optional[List[str]] = Field(None, description="Optional custom tags list.")
+    github_repo: Optional[str] = Field(None, description="Optional remote GitHub repository name in format 'owner/repo'.")
+    jira_project_key: Optional[str] = Field(None, description="Optional target Jira project key (e.g., 'PROJ').")
 
 class ResumePlanRequest(BaseModel):
     decision: Optional[Literal["approve", "revise"]] = Field(None, description="The EM's planning decision.")
@@ -228,9 +230,31 @@ async def run_graph_resume_background(graph, thread_id: str, resume_cmd: Command
 
 # --- API Endpoints ---
 @app.post("/api/v1/plan/start")
-async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTasks, role: str = Depends(get_current_role), org_id: str = Depends(get_current_org)):
+async def start_plan(
+    request: StartPlanRequest, 
+    background_tasks: BackgroundTasks, 
+    role: str = Depends(get_current_role), 
+    org_id: str = Depends(get_current_org),
+    user_id: Optional[str] = Header(None, alias="user-id")
+):
     if role != "PM":
         raise HTTPException(status_code=403, detail="Access denied. Only Product Managers (PM) can initiate new sprint plans.")
+        
+    raw_prd = request.raw_prd
+    if request.source_document:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Header 'user-id' is required to resolve integrations for upstream source documents.")
+        try:
+            from middleware.integration_fetcher import fetch_external_document
+            logger.info(f"[API] Fetching source document from {request.source_document} for user {user_id}")
+            raw_prd = await fetch_external_document(request.source_document, user_id, org_id)
+        except Exception as e:
+            logger.error(f"[API] Failed to fetch source document: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to fetch source document: {str(e)}")
+            
+    if not raw_prd:
+        raise HTTPException(status_code=400, detail="Please provide either 'raw_prd' or a valid 'source_document' URL.")
+
     thread_id = request.thread_id or str(uuid.uuid4())
     
     # Try fetching project history to avoid duplicate runs
@@ -246,7 +270,7 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
         pass
         
     initial_state = {
-        "raw_prd": request.raw_prd,
+        "raw_prd": raw_prd,
         "codebase_summary": None,
         "missing_edge_cases": None,
         "jira_tickets": None,
@@ -256,10 +280,13 @@ async def start_plan(request: StartPlanRequest, background_tasks: BackgroundTask
         "workspace_profile": None,
         "sprint_constraints": request.sprint_constraints,
         "custom_tags": request.custom_tags,
-        "org_id": org_id
+        "org_id": org_id,
+        "user_id": user_id,
+        "github_repo": request.github_repo,
+        "jira_project_key": request.jira_project_key
     }
     
-    title = f"Plan for {request.raw_prd.splitlines()[0][:50]}" if request.raw_prd else "New Sprint Plan"
+    title = f"Plan for {raw_prd.splitlines()[0][:50]}" if raw_prd else "New Sprint Plan"
     title = title.lstrip("#* ").strip()
     
     # Write initial project metadata row
