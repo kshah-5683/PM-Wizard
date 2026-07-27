@@ -197,3 +197,45 @@ class TestIntegrationsFetcher(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("user-id", response.json()["detail"])
+
+    @patch("middleware.integration_fetcher.fetch_external_document")
+    def test_parse_url_endpoint_success(self, mock_fetch):
+        mock_fetch.return_value = "# My Fetched Markdown"
+        
+        response = self.client.post(
+            "/api/v1/parse-url",
+            json={"url": "https://www.notion.so/my-page"},
+            headers={
+                "X-User-Role": "PM",
+                "X-Org-Id": "org-google",
+                "user-id": "user-email@test.com"
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["markdown"], "# My Fetched Markdown")
+        mock_fetch.assert_called_once_with("https://www.notion.so/my-page", "user-email@test.com", "org-google")
+
+    def test_parse_url_endpoint_role_restrictions(self):
+        # 1. Non-PM should fail with 403
+        response = self.client.post(
+            "/api/v1/parse-url",
+            json={"url": "https://www.notion.so/my-page"},
+            headers={
+                "X-User-Role": "DEV",
+                "X-Org-Id": "org-google",
+                "user-id": "user-email@test.com"
+            }
+        )
+        self.assertEqual(response.status_code, 403)
+
+        # 2. Missing user-id header should fail with 400
+        response_missing_header = self.client.post(
+            "/api/v1/parse-url",
+            json={"url": "https://www.notion.so/my-page"},
+            headers={
+                "X-User-Role": "PM",
+                "X-Org-Id": "org-google"
+            }
+        )
+        self.assertEqual(response_missing_header.status_code, 400)
+

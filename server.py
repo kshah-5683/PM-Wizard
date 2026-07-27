@@ -70,6 +70,9 @@ class StartPlanRequest(BaseModel):
     github_repo: Optional[str] = Field(None, description="Optional remote GitHub repository name in format 'owner/repo'.")
     jira_project_key: Optional[str] = Field(None, description="Optional target Jira project key (e.g., 'PROJ').")
 
+class ParseUrlRequest(BaseModel):
+    url: str = Field(..., description="The Notion or Confluence URL to fetch and parse.")
+
 class ResumePlanRequest(BaseModel):
     decision: Optional[Literal["approve", "revise"]] = Field(None, description="The EM's planning decision.")
     comments: Optional[str] = Field(None, description="Comments or revision instructions from the Engineering Manager.")
@@ -737,6 +740,27 @@ async def parse_document(
     except Exception as e:
         logger.error(f"[API] Failed to parse document: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
+
+@app.post("/api/v1/parse-url")
+async def parse_url_endpoint(
+    request: ParseUrlRequest,
+    role: str = Depends(get_current_role),
+    org_id: str = Depends(get_current_org),
+    user_id: Optional[str] = Header(None, alias="user-id")
+):
+    if role != "PM":
+        raise HTTPException(status_code=403, detail="Access denied. Only Product Managers (PM) can parse source document URLs.")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Header 'user-id' is required to resolve integrations.")
+        
+    try:
+        from middleware.integration_fetcher import fetch_external_document
+        logger.info(f"[API] Parsing URL: {request.url} for user {user_id}")
+        markdown_content = await fetch_external_document(request.url, user_id, org_id)
+        return {"markdown": markdown_content}
+    except Exception as e:
+        logger.error(f"[API] Failed to parse URL {request.url}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 

@@ -21,6 +21,7 @@ export default function Dashboard() {
   const [activeOrg, setActiveOrg] = useState('org-google');
   const [currentUser, setCurrentUser] = useState(null);
   const [isParsingFile, setIsParsingFile] = useState(false);
+  const [isParsingUrl, setIsParsingUrl] = useState(false);
   const [uploadSuccessMsg, setUploadSuccessMsg] = useState('');
   const [integrations, setIntegrations] = useState([
     { provider: 'github', connected: false },
@@ -45,6 +46,48 @@ export default function Dashboard() {
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
     router.push('/login');
+  };
+
+  const handleFetchUrl = async () => {
+    if (!sourceDocument.trim()) return;
+    
+    setIsParsingUrl(true);
+    setError(null);
+    setUploadSuccessMsg('');
+
+    try {
+      const userStr = localStorage.getItem('currentUser');
+      if (!userStr) {
+        throw new Error("You must be logged in to fetch integration resources.");
+      }
+      const user = JSON.parse(userStr);
+
+      const response = await fetch(`${API_BASE}/api/v1/parse-url`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': activePersona,
+          'X-Org-Id': activeOrg,
+          'user-id': user.email
+        },
+        body: JSON.stringify({
+          url: sourceDocument.trim()
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to fetch document from URL.");
+      }
+
+      const data = await response.json();
+      setRawPrd(data.markdown);
+      setUploadSuccessMsg(`Successfully fetched and parsed document! Content loaded below.`);
+    } catch (err) {
+      setError(err.message || "An error occurred during URL parsing.");
+    } finally {
+      setIsParsingUrl(false);
+    }
   };
 
   const processUploadedFile = async (file) => {
@@ -323,13 +366,25 @@ export default function Dashboard() {
             <form onSubmit={handleStartPlanning}>
               <div className="form-group">
                 <label className="form-label">Upstream Source URL (Optional)</label>
-                <input 
-                  type="text" 
-                  className="input-field" 
-                  placeholder="e.g. https://notion.so/my-workspace/prd-document"
-                  value={sourceDocument}
-                  onChange={(e) => setSourceDocument(e.target.value)}
-                />
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <input 
+                    type="text" 
+                    className="input-field" 
+                    style={{ flex: 1 }}
+                    placeholder="e.g. https://notion.so/my-workspace/prd-document"
+                    value={sourceDocument}
+                    onChange={(e) => setSourceDocument(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleFetchUrl}
+                    disabled={isParsingUrl || !sourceDocument.trim()}
+                    className="btn btn-secondary"
+                    style={{ whiteSpace: 'nowrap', minWidth: '120px' }}
+                  >
+                    {isParsingUrl ? 'Fetching...' : 'Fetch Link'}
+                  </button>
+                </div>
               </div>
 
               <div className="form-group">

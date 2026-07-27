@@ -209,6 +209,11 @@ async def fetch_notion_document(page_id: str, access_token: str) -> str:
             
         # Fetch blocks
         raw_markdown = await notion_blocks_to_markdown(page_id, access_token, client)
+        if not raw_markdown or not raw_markdown.strip():
+            raise ValueError(
+                "No page content or blocks could be retrieved from Notion. "
+                "Please verify that the page is not empty and that you have shared this page with your Notion Integration."
+            )
         full_text = f"# {title}\n\n{raw_markdown}"
         
         # Format markdown via the lightweight LLM cleaner to ensure premium document aesthetics
@@ -234,6 +239,11 @@ async def fetch_confluence_document(page_id: str, cloud_id: str, access_token: s
         
         title = data.get("title", "Confluence Document")
         body_html = data.get("body", {}).get("storage", {}).get("value", "")
+        if not body_html or not body_html.strip():
+            raise ValueError(
+                "No page body content could be retrieved from Confluence. "
+                "Please verify that the page is not empty and that your integration token has permission to access it."
+            )
         
         raw_content = f"# {title}\n\n{body_html}"
         
