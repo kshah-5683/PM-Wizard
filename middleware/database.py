@@ -153,9 +153,41 @@ class DatabaseManager:
                             print("[Database] Supabase Auth schema detected. Initializing Row-Level Security policies.")
                             
                             # Enable RLS
+                            await cur.execute("ALTER TABLE project_history ENABLE ROW LEVEL SECURITY;")
                             await cur.execute("ALTER TABLE user_integrations ENABLE ROW LEVEL SECURITY;")
                             await cur.execute("ALTER TABLE ticket_change_requests ENABLE ROW LEVEL SECURITY;")
                             
+                            # Project History RLS Policies
+                            await cur.execute("DROP POLICY IF EXISTS select_project_history ON project_history;")
+                            await cur.execute("""
+                                CREATE POLICY select_project_history ON project_history
+                                FOR SELECT USING (
+                                    (auth.jwt() ->> 'role' = 'product_manager') OR 
+                                    (auth.jwt() -> 'user_metadata' ->> 'role' = 'PM') OR
+                                    (((auth.jwt() ->> 'role' = 'engineering_manager') OR (auth.jwt() -> 'user_metadata' ->> 'role' = 'EM')) AND sent_to_em = TRUE) OR
+                                    (((auth.jwt() ->> 'role' = 'developer') OR (auth.jwt() -> 'user_metadata' ->> 'role' = 'DEV')) AND shared_with_dev = TRUE)
+                                );
+                            """)
+                            
+                            await cur.execute("DROP POLICY IF EXISTS insert_project_history ON project_history;")
+                            await cur.execute("""
+                                CREATE POLICY insert_project_history ON project_history
+                                FOR INSERT WITH CHECK (
+                                    (auth.jwt() ->> 'role' = 'product_manager') OR 
+                                    (auth.jwt() -> 'user_metadata' ->> 'role' = 'PM')
+                                );
+                            """)
+                            
+                            await cur.execute("DROP POLICY IF EXISTS update_project_history ON project_history;")
+                            await cur.execute("""
+                                CREATE POLICY update_project_history ON project_history
+                                FOR UPDATE USING (
+                                    (auth.jwt() ->> 'role' = 'product_manager') OR 
+                                    (auth.jwt() -> 'user_metadata' ->> 'role' = 'PM') OR
+                                    ((auth.jwt() ->> 'role' = 'engineering_manager') OR (auth.jwt() -> 'user_metadata' ->> 'role' = 'EM'))
+                                );
+                            """)
+
                             # User Integrations RLS: Only allow users to read/write their own OAuth tokens
                             await cur.execute("DROP POLICY IF EXISTS select_own_integrations ON user_integrations;")
                             await cur.execute("""

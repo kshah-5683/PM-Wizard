@@ -17,8 +17,8 @@ PROJECT_ROOT = os.getenv("PROJECT_ROOT", os.path.dirname(os.path.dirname(os.path
 # in .env to enable LangSmith tracing for all LangGraph runs.
 
 # Model Fallback and token guard limits
-FALLBACK_PRIMARY_MODEL = os.getenv("FALLBACK_PRIMARY_MODEL", "github/meta-llama-3.3-70b-instruct")
-FALLBACK_CRITIC_MODEL = os.getenv("FALLBACK_CRITIC_MODEL", "github/meta-llama-3.1-8b-instruct")
+FALLBACK_PRIMARY_MODEL = os.getenv("FALLBACK_PRIMARY_MODEL", "github/Meta-Llama-3.3-70B-Instruct")
+FALLBACK_CRITIC_MODEL = os.getenv("FALLBACK_CRITIC_MODEL", "github/Meta-Llama-3.1-8B-Instruct")
 MODEL_MAX_TOKENS = int(os.getenv("MODEL_MAX_TOKENS", "128000"))
 
 # LiteLLM Disk Cache for Development
